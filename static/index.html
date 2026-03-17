@@ -129,20 +129,20 @@
         try {
             res = await fetch(API + path, opts);
         } catch (e) {
-            return { error: 'Sunucuya bağlanılamadı. Lütfen ağ bağlantınızı kontrol edin.' };
+            return { error: 'Sunucuya bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.' };
         }
         if (res.status === 401 && path !== '/api/auth/me' && path !== '/api/auth/login') {
             currentUser = null;
             authToken = null;
             localStorage.removeItem('authToken');
             renderLogin();
-            return { error: 'Oturum süresi doldu' };
+            return { error: 'Oturum süreniz doldu, lütfen tekrar giriş yapın.' };
         }
         if (opts.raw) return res;
         try {
             return await res.json();
         } catch (e) {
-            return { error: `Sunucu yanıtı okunamadı (HTTP ${res.status}). Lütfen tekrar deneyin.` };
+            return { error: 'Bir sorun oluştu. Lütfen tekrar deneyin.' };
         }
     }
 
@@ -204,25 +204,25 @@
         const links = document.getElementById('nav-links');
         links.innerHTML = `
             <div class="nav-link" onclick="navigate('/')" data-nav="dashboard">Ana Sayfa</div>
-            <div class="nav-link" onclick="navigate('/library')" data-nav="library">Kütüphane</div>
+            <div class="nav-link" onclick="navigate('/library')" data-nav="library">Analizlerim</div>
             <div class="nav-link" onclick="navigate('/train')" data-nav="train">
                 <span class="flex items-center gap-1.5">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    Yeni Model
+                    Yeni Analiz
                 </span>
             </div>
-            ${isAdmin() ? '<div class="nav-link" onclick="navigate(\'/admin\')" data-nav="admin">Yönetim</div>' : ''}
+            ${isAdmin() ? '<div class="nav-link" onclick="navigate(\'/admin\')" data-nav="admin">Y\u00f6netim</div>' : ''}
         `;
         const userDiv = document.getElementById('nav-user');
-        const roleBadge = currentUser.role === 'master_admin' ? '<span class="tag tag-purple text-xs">Ana Yönetici</span>'
-            : currentUser.role === 'admin' ? '<span class="tag tag-blue text-xs">Yönetici</span>'
+        const roleBadge = currentUser.role === 'master_admin' ? '<span class="tag tag-purple text-xs">Ana Y\u00f6netici</span>'
+            : currentUser.role === 'admin' ? '<span class="tag tag-blue text-xs">Y\u00f6netici</span>'
             : '';
         userDiv.innerHTML = `
             <div class="flex items-center gap-2">
                 ${roleBadge}
                 <span class="text-sm font-medium text-slate-600">${esc(currentUser.display_name || currentUser.username)}</span>
             </div>
-            <button class="btn-secondary btn-sm" onclick="logout()">Çıkış</button>
+            <button class="btn-secondary btn-sm" onclick="logout()">\u00c7\u0131k\u0131\u015f</button>
         `;
     }
 
@@ -244,10 +244,10 @@
         const d = new Date(dateStr);
         const now = new Date();
         const diff = (now - d) / 1000;
-        if (diff < 60) return 'az önce';
-        if (diff < 3600) return Math.floor(diff/60) + ' dk önce';
-        if (diff < 86400) return Math.floor(diff/3600) + ' sa önce';
-        if (diff < 2592000) return Math.floor(diff/86400) + ' gün önce';
+        if (diff < 60) return 'az \u00f6nce';
+        if (diff < 3600) return Math.floor(diff/60) + ' dk \u00f6nce';
+        if (diff < 86400) return Math.floor(diff/3600) + ' sa \u00f6nce';
+        if (diff < 2592000) return Math.floor(diff/86400) + ' g\u00fcn \u00f6nce';
         return d.toLocaleDateString('tr-TR');
     }
 
@@ -275,23 +275,23 @@
 
     function scoreLabel(taskType) {
         if (taskType === 'timeseries') return 'MASE';
-        if (taskType === 'call_analysis') return 'Doğruluk';
-        return 'Skor';
+        if (taskType === 'call_analysis') return 'Ba\u015far\u0131';
+        return 'Ba\u015far\u0131';
     }
 
     function cpuTag(cat) {
-        if (cat === 'Düşük') return '<span class="tag tag-green">Düşük CPU</span>';
+        if (cat === 'D\u00fc\u015f\u00fck') return '<span class="tag tag-green">D\u00fc\u015f\u00fck CPU</span>';
         if (cat === 'Orta') return '<span class="tag tag-orange">Orta CPU</span>';
-        return '<span class="tag tag-red">Yüksek CPU</span>';
+        return '<span class="tag tag-red">Y\u00fcksek CPU</span>';
     }
 
     function sqlTag(sql) {
-        if (sql.easy_sql) return '<span class="tag tag-green">Saatlik çalışabilir</span>';
+        if (sql.easy_sql) return '<span class="tag tag-green">Otomatik \u00e7al\u0131\u015fabilir</span>';
         return '<span class="tag tag-gray">Desteklenmiyor</span>';
     }
 
     function airflowTag(af) {
-        if (af.supported) return '<span class="tag tag-green">Günlük çalışabilir</span>';
+        if (af.supported) return '<span class="tag tag-green">Otomatik \u00e7al\u0131\u015fabilir</span>';
         return '<span class="tag tag-gray">Desteklenmiyor</span>';
     }
 
@@ -317,19 +317,19 @@
                         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
                     </div>
                     <h1 class="text-2xl font-bold text-slate-800 mb-1">Tahmin Platformu</h1>
-                    <p class="text-slate-500 text-sm">Hesabınıza giriş yapın</p>
+                    <p class="text-slate-500 text-sm">Hesab\u0131n\u0131za giri\u015f yap\u0131n</p>
                 </div>
                 <div id="login-error" class="hidden mb-4 p-3 rounded-lg bg-red-50 text-danger-600 text-sm border border-red-200"></div>
                 <div class="space-y-4">
                     <div>
-                        <label class="block text-sm font-medium text-slate-600 mb-1.5">Kullanıcı Adı</label>
+                        <label class="block text-sm font-medium text-slate-600 mb-1.5">Kullan\u0131c\u0131 Ad\u0131</label>
                         <input class="input-field" id="login-user" placeholder="admin" autofocus onkeydown="if(event.key==='Enter')doLogin()">
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-slate-600 mb-1.5">Şifre</label>
-                        <input class="input-field" id="login-pass" type="password" placeholder="••••••" onkeydown="if(event.key==='Enter')doLogin()">
+                        <label class="block text-sm font-medium text-slate-600 mb-1.5">\u015eifre</label>
+                        <input class="input-field" id="login-pass" type="password" placeholder="\u2022\u2022\u2022\u2022\u2022\u2022" onkeydown="if(event.key==='Enter')doLogin()">
                     </div>
-                    <button class="btn-primary w-full text-center py-3" onclick="doLogin()" id="login-btn">Giriş Yap</button>
+                    <button class="btn-primary w-full text-center py-3" onclick="doLogin()" id="login-btn">Giri\u015f Yap</button>
                 </div>
             </div>
         </div>`;
@@ -342,13 +342,13 @@
         const btn = document.getElementById('login-btn');
 
         if (!username || !password) {
-            errDiv.textContent = 'Kullanıcı adı ve şifre gerekli';
+            errDiv.textContent = 'Kullan\u0131c\u0131 ad\u0131 ve \u015fifre gerekli';
             errDiv.classList.remove('hidden');
             return;
         }
 
         btn.disabled = true;
-        btn.textContent = 'Giriş yapılıyor...';
+        btn.textContent = 'Giri\u015f yap\u0131l\u0131yor...';
 
         try {
             const res = await fetch(API + '/api/auth/login', {
@@ -366,16 +366,16 @@
                 navigate('/');
                 router();
             } else {
-                errDiv.textContent = data.error || 'Giriş başarısız';
+                errDiv.textContent = data.error || 'Giri\u015f ba\u015far\u0131s\u0131z. L\u00fctfen bilgilerinizi kontrol edin.';
                 errDiv.classList.remove('hidden');
             }
         } catch (err) {
-            errDiv.textContent = 'Sunucuya bağlanılamadı';
+            errDiv.textContent = 'Sunucuya ba\u011flanamad\u0131. L\u00fctfen tekrar deneyin.';
             errDiv.classList.remove('hidden');
         }
 
         btn.disabled = false;
-        btn.textContent = 'Giriş Yap';
+        btn.textContent = 'Giri\u015f Yap';
     }
 
     // ══════════════════════════════════════════════════════════
@@ -390,7 +390,7 @@
             <div class="mb-8">
                 <div class="section-title flex items-center gap-2">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#D97706" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-                    Yönetici Onaylı Modeller
+                    Y\u00f6netici Onayl\u0131 Analizler
                 </div>
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     ${data.endorsed.map(m => `
@@ -399,12 +399,12 @@
                                 <div class="font-semibold text-slate-800 truncate">${esc(m.name)}</div>
                                 <span class="endorsed-badge flex items-center gap-1">
                                     <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-                                    Onaylı
+                                    Onayl\u0131
                                 </span>
                             </div>
-                            <div class="text-sm text-slate-500 mb-2">${esc(m.target_column)} · ${m.task_type === 'classification' ? 'Sınıflandırma' : m.task_type === 'timeseries' ? 'Zaman Serisi' : m.task_type === 'text' ? 'Sınıflandırma' : m.task_type === 'call_analysis' ? 'Çağrı Analizi' : 'Regresyon'}</div>
+                            <div class="text-sm text-slate-500 mb-2">${esc(m.target_column)} \u00b7 ${m.task_type === 'classification' ? 'Kategorileme' : m.task_type === 'timeseries' ? 'Gelecek Tahmini' : m.task_type === 'text' ? 'Kategorileme' : m.task_type === 'call_analysis' ? 'Ses Analizi' : 'Say\u0131sal Tahmin'}</div>
                             <div class="${scoreColor(m.best_score, m.task_type)} font-mono font-bold text-lg">${formatScore(m.best_score, m.task_type)}</div>
-                            <div class="text-xs text-slate-400 mt-1">Oluşturan: ${esc(m.owner || '—')}</div>
+                            <div class="text-xs text-slate-400 mt-1">Haz\u0131rlayan: ${esc(m.owner || '\u2014')}</div>
                         </div>
                     `).join('')}
                 </div>
@@ -415,7 +415,7 @@
             <div class="mb-8">
                 <div class="section-title flex items-center gap-2">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-                    En Çok Ziyaret Edilen
+                    En \u00c7ok Ziyaret Edilen
                 </div>
                 <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-3">
                     ${data.popular.map((m, i) => `
@@ -425,7 +425,7 @@
                                 <span class="font-medium text-sm text-slate-700 truncate">${esc(m.name)}</span>
                             </div>
                             <div class="${scoreColor(m.best_score, m.task_type)} font-mono font-bold">${formatScore(m.best_score, m.task_type)}</div>
-                            <div class="text-xs text-slate-400 mt-1">${m.view_count || 0} görüntüleme</div>
+                            <div class="text-xs text-slate-400 mt-1">${m.view_count || 0} g\u00f6r\u00fcnt\u00fcleme</div>
                         </div>
                     `).join('')}
                 </div>
@@ -437,31 +437,31 @@
             <div class="flex items-end justify-between mb-8">
                 <div>
                     <h1 class="text-3xl font-bold tracking-tight text-slate-900 mb-1">Merhaba, ${esc(currentUser.display_name || currentUser.username)}</h1>
-                    <p class="text-slate-500 text-sm">Tahmin modellerinizi buradan yönetin</p>
+                    <p class="text-slate-500 text-sm">Verilerinizi y\u00fckleyin, analizlerinizi takip edin</p>
                 </div>
                 <button class="btn-primary flex items-center gap-2" onclick="navigate('/train')">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    Yeni Model Eğit
+                    Yeni Analiz Ba\u015flat
                 </button>
             </div>
 
             <!-- Stats -->
             <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
                 <div class="stat-card">
-                    <div class="text-slate-500 text-xs font-medium mb-1">Toplam Model</div>
+                    <div class="text-slate-500 text-xs font-medium mb-1">Toplam Analiz</div>
                     <div class="text-3xl font-bold text-slate-800">${data.total_models}</div>
                 </div>
                 <div class="stat-card">
-                    <div class="text-slate-500 text-xs font-medium mb-1">Benim Modellerim</div>
+                    <div class="text-slate-500 text-xs font-medium mb-1">Benim Analizlerim</div>
                     <div class="text-3xl font-bold text-slate-800">${data.my_model_count}</div>
                 </div>
                 <div class="stat-card">
-                    <div class="text-slate-500 text-xs font-medium mb-1">${data.best_model && data.best_model.task_type === 'timeseries' ? 'En İyi MASE' : 'En İyi Skor'}</div>
-                    ${data.best_model ? `<div class="text-3xl font-bold ${scoreColor(data.best_model.score, data.best_model.task_type)}">${formatScore(data.best_model.score, data.best_model.task_type)}</div><div class="text-xs text-slate-400 truncate mt-0.5">${esc(data.best_model.name)}</div>` : '<div class="text-slate-400 text-sm">Henüz model yok</div>'}
+                    <div class="text-slate-500 text-xs font-medium mb-1">${data.best_model && data.best_model.task_type === 'timeseries' ? 'En \u0130yi MASE' : 'En Ba\u015far\u0131l\u0131 Sonu\u00e7'}</div>
+                    ${data.best_model ? `<div class="text-3xl font-bold ${scoreColor(data.best_model.score, data.best_model.task_type)}">${formatScore(data.best_model.score, data.best_model.task_type)}</div><div class="text-xs text-slate-400 truncate mt-0.5">${esc(data.best_model.name)}</div>` : '<div class="text-slate-400 text-sm">Hen\u00fcz analiz yok</div>'}
                 </div>
                 <div class="stat-card flex flex-col justify-between">
-                    <div class="text-slate-500 text-xs font-medium mb-2">Hızlı İşlemler</div>
-                    <button class="btn-secondary btn-sm w-full text-center" onclick="navigate('/library')">Kütüphaneye Git</button>
+                    <div class="text-slate-500 text-xs font-medium mb-2">H\u0131zl\u0131 \u0130\u015flemler</div>
+                    <button class="btn-secondary btn-sm w-full text-center" onclick="navigate('/library')">T\u00fcm Analizlere Git</button>
                 </div>
             </div>
 
@@ -470,26 +470,26 @@
 
             <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
                 <div class="lg:col-span-3">
-                    <div class="section-title">Son Eğitilen Modeller (Herkese Açık)</div>
+                    <div class="section-title">Son Analizler (Herkese A\u00e7\u0131k)</div>
                     <div class="card-flat overflow-hidden">
                         ${data.recent_public && data.recent_public.length ? `
                         <table class="data-table">
-                            <thead><tr><th>Model</th><th>Skor</th><th>Oluşturan</th><th>Tarih</th></tr></thead>
+                            <thead><tr><th>Analiz</th><th>Ba\u015far\u0131</th><th>Haz\u0131rlayan</th><th>Tarih</th></tr></thead>
                             <tbody>
                             ${data.recent_public.map(m => `
                                 <tr onclick="navigate('/model/${m.id}/results')">
                                     <td>
                                         <div class="row-name font-medium text-sm transition-colors">${esc(m.name)}</div>
-                                        <div class="text-slate-400 text-xs mt-0.5">${esc(m.target_column)} · ${m.task_type === 'classification' ? 'Sınıflandırma' : m.task_type === 'timeseries' ? 'Zaman Serisi' : m.task_type === 'text' ? 'Sınıflandırma' : m.task_type === 'call_analysis' ? 'Çağrı Analizi' : 'Regresyon'} · ${m.num_rows} satır</div>
+                                        <div class="text-slate-400 text-xs mt-0.5">${esc(m.target_column)} \u00b7 ${m.task_type === 'classification' ? 'Kategorileme' : m.task_type === 'timeseries' ? 'Gelecek Tahmini' : m.task_type === 'text' ? 'Kategorileme' : m.task_type === 'call_analysis' ? 'Ses Analizi' : 'Say\u0131sal Tahmin'} \u00b7 ${m.num_rows} sat\u0131r</div>
                                     </td>
                                     <td class="${scoreColor(m.best_score, m.task_type)} font-mono text-sm font-bold">${formatScore(m.best_score, m.task_type)}</td>
-                                    <td class="text-slate-500 text-xs">${esc(m.owner || '—')}</td>
+                                    <td class="text-slate-500 text-xs">${esc(m.owner || '\u2014')}</td>
                                     <td class="text-slate-400 text-xs">${timeAgo(m.created_at)}</td>
                                 </tr>
                             `).join('')}
                             </tbody>
                         </table>
-                        ` : '<div class="p-8 text-center text-slate-400"><p class="mb-3">Henüz model eğitilmedi</p><button class="btn-primary btn-sm" onclick="navigate(\'/train\')">İlk Modelinizi Eğitin</button></div>'}
+                        ` : '<div class="p-8 text-center text-slate-400"><p class="mb-3">Hen\u00fcz analiz yap\u0131lmam\u0131\u015f</p><button class="btn-primary btn-sm" onclick="navigate(\'/train\')">\u0130lk Analizinizi Ba\u015flat\u0131n</button></div>'}
                     </div>
                 </div>
 
@@ -498,13 +498,13 @@
                     <div class="card-flat p-4 space-y-3 max-h-96 overflow-y-auto">
                         ${data.activity && data.activity.length ? data.activity.map(a => `
                             <div class="flex items-start gap-3">
-                                <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-slate-100 text-sm">${a.action === 'trained' ? '🎯' : a.action === 'predicted' ? '⚡' : a.action === 'endorsed' ? '⭐' : '📌'}</div>
+                                <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-slate-100 text-sm">${a.action === 'trained' ? '\ud83c\udfaf' : a.action === 'predicted' ? '\u26a1' : a.action === 'endorsed' ? '\u2b50' : '\ud83d\udccc'}</div>
                                 <div class="flex-1 min-w-0">
                                     <div class="text-sm text-slate-700">${esc(a.details || a.action)}</div>
-                                    <div class="text-slate-400 text-xs mt-0.5">${esc(a.username || '')} · ${timeAgo(a.timestamp)}</div>
+                                    <div class="text-slate-400 text-xs mt-0.5">${esc(a.username || '')} \u00b7 ${timeAgo(a.timestamp)}</div>
                                 </div>
                             </div>
-                        `).join('') : '<div class="text-slate-400 text-sm text-center py-4">Henüz aktivite yok</div>'}
+                        `).join('') : '<div class="text-slate-400 text-sm text-center py-4">Hen\u00fcz aktivite yok</div>'}
                     </div>
                 </div>
             </div>
@@ -523,27 +523,27 @@
         <div class="fade-in">
             <div class="flex items-end justify-between mb-8">
                 <div>
-                    <h1 class="text-3xl font-bold tracking-tight text-slate-900 mb-1">Model Kütüphanesi</h1>
-                    <p class="text-slate-500 text-sm">${data.total} model listeleniyor</p>
+                    <h1 class="text-3xl font-bold tracking-tight text-slate-900 mb-1">T\u00fcm Analizler</h1>
+                    <p class="text-slate-500 text-sm">${data.total} analiz listeleniyor</p>
                 </div>
                 <button class="btn-primary flex items-center gap-2" onclick="navigate('/train')">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    Yeni Model
+                    Yeni Analiz
                 </button>
             </div>
 
             <div class="mb-4">
-                <input class="input-field max-w-md" type="text" placeholder="Model adı, hedef sütun veya sahibi ile arayın..." id="lib-search" oninput="filterLibrary()">
+                <input class="input-field max-w-md" type="text" placeholder="Analiz ad\u0131, hedef s\u00fctun veya haz\u0131rlayan ile aray\u0131n..." id="lib-search" oninput="filterLibrary()">
             </div>
 
             <div class="card-flat overflow-hidden">
                 <table class="data-table" id="lib-models">
                     <thead><tr>
-                        <th>Model Adı</th>
-                        <th>Skor</th>
-                        <th>Tür</th>
+                        <th>Analiz Ad\u0131</th>
+                        <th>Ba\u015far\u0131</th>
+                        <th>T\u00fcr</th>
                         <th>Sahip</th>
-                        <th>Görünürlük</th>
+                        <th>G\u00f6r\u00fcn\u00fcrl\u00fck</th>
                         <th>Tarih</th>
                         <th></th>
                     </tr></thead>
@@ -558,24 +558,24 @@
     }
 
     function renderModelRows(models) {
-        if (!models.length) return '<tr><td colspan="7" class="p-8 text-center text-slate-400">Filtrelerinize uygun model bulunamadı</td></tr>';
+        if (!models.length) return '<tr><td colspan="7" class="p-8 text-center text-slate-400">Filtrelerinize uygun analiz bulunamad\u0131</td></tr>';
         return models.map(m => `
             <tr onclick="navigate('/model/${m.id}/results')">
                 <td>
                     <div class="flex items-center gap-2">
                         <div class="row-name font-medium text-sm transition-colors">${esc(m.name)}</div>
-                        ${m.endorsed ? '<span class="endorsed-badge text-xs">Onaylı</span>' : ''}
+                        ${m.endorsed ? '<span class="endorsed-badge text-xs">Onayl\u0131</span>' : ''}
                     </div>
-                    <div class="text-slate-400 text-xs mt-0.5">Hedef: ${esc(m.target_column)} · ${m.num_rows} satır</div>
+                    <div class="text-slate-400 text-xs mt-0.5">Hedef: ${esc(m.target_column)} \u00b7 ${m.num_rows} sat\u0131r</div>
                 </td>
                 <td class="${scoreColor(m.best_score, m.task_type)} font-mono text-sm font-bold">${formatScore(m.best_score, m.task_type)}</td>
-                <td><span class="tag ${m.task_type === 'classification' ? 'tag-green' : m.task_type === 'timeseries' ? 'tag-blue' : m.task_type === 'text' ? 'tag-green' : m.task_type === 'call_analysis' ? 'tag-purple' : 'tag-orange'}">${m.task_type === 'classification' ? 'Sınıf.' : m.task_type === 'timeseries' ? 'Z.Serisi' : m.task_type === 'text' ? 'Sınıf.' : m.task_type === 'call_analysis' ? 'Ses/LLM' : 'Regr.'}</span></td>
-                <td class="text-slate-500 text-xs">${esc(m.owner || '—')}</td>
-                <td><span class="tag ${m.visibility === 'private' ? 'tag-red' : 'tag-green'}">${m.visibility === 'private' ? 'Özel' : 'Açık'}</span></td>
+                <td><span class="tag ${m.task_type === 'classification' ? 'tag-green' : m.task_type === 'timeseries' ? 'tag-blue' : m.task_type === 'text' ? 'tag-green' : m.task_type === 'call_analysis' ? 'tag-purple' : 'tag-orange'}">${m.task_type === 'classification' ? 'Kategori' : m.task_type === 'timeseries' ? 'Trend' : m.task_type === 'text' ? 'Kategori' : m.task_type === 'call_analysis' ? 'Ses' : 'Say\u0131sal'}</span></td>
+                <td class="text-slate-500 text-xs">${esc(m.owner || '\u2014')}</td>
+                <td><span class="tag ${m.visibility === 'private' ? 'tag-red' : 'tag-green'}">${m.visibility === 'private' ? '\u00d6zel' : 'A\u00e7\u0131k'}</span></td>
                 <td class="text-slate-400 text-xs">${timeAgo(m.created_at)}</td>
                 <td class="text-right" onclick="event.stopPropagation()">
                     ${m.task_type === 'call_analysis' ? `
-                        <button class="btn-sm btn-export mr-1" onclick="navigate('/model/${m.id}/predict-audio')" title="Modeli Çalıştır">
+                        <button class="btn-sm btn-export mr-1" onclick="navigate('/model/${m.id}/predict-audio')" title="Analizi \u00c7al\u0131\u015ft\u0131r">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                         </button>
                     ` : ''}
@@ -612,26 +612,26 @@
         app().innerHTML = `
         <div class="fade-in max-w-3xl mx-auto">
             <div class="mb-8">
-                <h1 class="text-3xl font-bold tracking-tight text-slate-900 mb-1">Yeni Model Eğit</h1>
-                <p class="text-slate-500 text-sm">CSV dosyanızı yükleyin veya ses dosyalarını değerlendirin</p>
+                <h1 class="text-3xl font-bold tracking-tight text-slate-900 mb-1">Yeni Analiz Ba\u015flat</h1>
+                <p class="text-slate-500 text-sm">Dosyan\u0131z\u0131 y\u00fckleyin, gerisini biz halledelim</p>
             </div>
 
             <!-- Mode Selector -->
             <div class="card p-4 mb-6" id="mode-selector">
                 <div class="flex gap-3">
-                    <button class="flex-1 py-3 px-4 rounded-xl text-sm font-semibold transition-all bg-brand-50 border-2 border-brand-400 text-brand-700" id="mode-btn-ml" onclick="switchTrainMode('ml')">
-                        <div class="flex items-center justify-center gap-2">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-                            AutoGluon ML Eğitimi
+                    <button class="flex-1 py-5 px-5 rounded-xl text-sm font-semibold transition-all bg-brand-50 border-2 border-brand-400 text-brand-700" id="mode-btn-ml" onclick="switchTrainMode('ml')">
+                        <div class="flex items-center justify-center gap-3">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                            <span class="text-base">Tablo Verisi Analizi</span>
                         </div>
-                        <div class="text-xs font-normal mt-1 opacity-70">CSV ile sınıflandırma, regresyon, zaman serisi</div>
+                        <div class="text-xs font-normal mt-2 opacity-70">Excel veya CSV dosyan\u0131zdan otomatik tahmin olu\u015fturun</div>
                     </button>
-                    <button class="flex-1 py-3 px-4 rounded-xl text-sm font-semibold transition-all bg-slate-50 border-2 border-slate-200 text-slate-500" id="mode-btn-audio" onclick="switchTrainMode('audio')">
-                        <div class="flex items-center justify-center gap-2">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-                            Çağrı Analizi (LLM)
+                    <button class="flex-1 py-5 px-5 rounded-xl text-sm font-semibold transition-all bg-slate-50 border-2 border-slate-200 text-slate-500" id="mode-btn-audio" onclick="switchTrainMode('audio')">
+                        <div class="flex items-center justify-center gap-3">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                            <span class="text-base">Ses Kayd\u0131 Analizi</span>
                         </div>
-                        <div class="text-xs font-normal mt-1 opacity-70">Ses dosyalarını LLM ile değerlendir</div>
+                        <div class="text-xs font-normal mt-2 opacity-70">\u00c7a\u011fr\u0131 kay\u0131tlar\u0131n\u0131z\u0131 dinletip otomatik de\u011ferlendirin</div>
                     </button>
                 </div>
             </div>
@@ -642,15 +642,15 @@
                     <div class="card p-6 mb-6">
                         <h3 class="font-semibold text-slate-800 mb-4 flex items-center gap-2">
                             <span class="w-7 h-7 rounded-full bg-brand-500 text-white text-xs flex items-center justify-center font-bold">1</span>
-                            CSV Dosyası Yükle
+                            Dosyan\u0131z\u0131 Y\u00fckleyin
                         </h3>
                         <div class="upload-zone" id="upload-zone" onclick="document.getElementById('csv-file').click()"
                              ondragover="event.preventDefault(); this.classList.add('dragover')"
                              ondragleave="this.classList.remove('dragover')"
                              ondrop="handleDrop(event)">
                             <svg class="mx-auto mb-3" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                            <p class="text-slate-600 font-medium">CSV dosyanızı buraya sürükleyin veya tıklayarak seçin</p>
-                            <p class="text-slate-400 text-sm mt-1">.csv dosyaları desteklenir</p>
+                            <p class="text-slate-600 font-medium">CSV dosyan\u0131z\u0131 buraya s\u00fcr\u00fckleyin veya t\u0131klayarak se\u00e7in</p>
+                            <p class="text-slate-400 text-sm mt-1">.csv dosyalar\u0131 desteklenir</p>
                         </div>
                         <input type="file" id="csv-file" accept=".csv" class="hidden" onchange="handleFileSelect(this)">
                     </div>
@@ -660,43 +660,45 @@
                     <div class="card p-6 mb-6">
                         <h3 class="font-semibold text-slate-800 mb-4 flex items-center gap-2">
                             <span class="w-7 h-7 rounded-full bg-brand-500 text-white text-xs flex items-center justify-center font-bold">2</span>
-                            Eğitim Ayarları
+                            Analiz Ayarlar\u0131
                         </h3>
                         <div class="mb-4"><span class="tag tag-green" id="file-info"></span></div>
                         <div class="mb-5 overflow-x-auto">
-                            <div class="text-xs text-slate-500 mb-2">Veri Önizleme (ilk 5 satır)</div>
+                            <div class="text-xs text-slate-500 mb-2">Veri \u00d6nizleme (ilk 5 sat\u0131r)</div>
                             <div id="preview-table" class="text-xs font-mono"></div>
                         </div>
                         <div class="grid grid-cols-2 gap-4 mb-4">
                             <div>
-                                <label class="block text-sm font-medium text-slate-600 mb-1.5">Model Adı</label>
-                                <input class="input-field" id="model-name" placeholder="Örn: Müşteri Tahmin Modeli">
+                                <label class="block text-sm font-medium text-slate-600 mb-1.5">Analiz Ad\u0131</label>
+                                <input class="input-field" id="model-name" placeholder="\u00d6rn: M\u00fc\u015fteri Tahmin Analizi">
+                                <p class="text-xs text-slate-400 mt-1">Analizinize hat\u0131rlayaca\u011f\u0131n\u0131z bir isim verin</p>
                             </div>
                             <div>
-                                <label class="block text-sm font-medium text-slate-600 mb-1.5">Tahmin Edilecek Sütun</label>
+                                <label class="block text-sm font-medium text-slate-600 mb-1.5">Hangi s\u00fctunu tahmin edelim?</label>
                                 <select class="input-field" id="target-col"></select>
+                                <p class="text-xs text-slate-400 mt-1">Sonu\u00e7lar\u0131n\u0131 \u00f6\u011frenmek istedi\u011finiz s\u00fctunu se\u00e7in</p>
                             </div>
                         </div>
                         <div class="grid grid-cols-3 gap-4 mb-6">
                             <div>
-                                <label class="block text-sm font-medium text-slate-600 mb-1.5">Görev Tipi</label>
+                                <label class="block text-sm font-medium text-slate-600 mb-1.5">Analiz T\u00fcr\u00fc</label>
                                 <select class="input-field" id="task-type" onchange="onTaskTypeChange()">
-                                    <option value="classification">Sınıflandırma</option>
-                                    <option value="regression">Regresyon (Sayısal)</option>
-                                    <option value="timeseries">Zaman Serisi Tahmini</option>
+                                    <option value="classification">Kategorileme (Evet/Hay\u0131r, T\u00fcr gibi)</option>
+                                    <option value="regression">Say\u0131sal Tahmin (Fiyat, Miktar gibi)</option>
+                                    <option value="timeseries">Gelecek Tahmini (Trend, Sat\u0131\u015f gibi)</option>
                                 </select>
                             </div>
                             <div>
-                                <label class="block text-sm font-medium text-slate-600 mb-1.5">Kalite Seviyesi</label>
+                                <label class="block text-sm font-medium text-slate-600 mb-1.5">Analiz Kalitesi</label>
                                 <select class="input-field" id="preset">
                                     ${presets.map(p => `<option value="${esc(p.value)}">${esc(p.label)}</option>`).join('')}
                                 </select>
                             </div>
                             <div>
-                                <label class="block text-sm font-medium text-slate-600 mb-1.5">Görünürlük</label>
+                                <label class="block text-sm font-medium text-slate-600 mb-1.5">Kimler G\u00f6rs\u00fcn?</label>
                                 <select class="input-field" id="visibility">
-                                    <option value="public">Herkese Açık</option>
-                                    <option value="private">Özel (Sadece Ben)</option>
+                                    <option value="public">Herkes G\u00f6rebilsin</option>
+                                    <option value="private">Sadece Ben G\u00f6reyim</option>
                                 </select>
                             </div>
                         </div>
@@ -704,28 +706,30 @@
                             <div class="p-4 rounded-xl bg-blue-50 border border-blue-200 mb-4">
                                 <div class="flex items-center gap-2 mb-2">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                                    <span class="text-sm font-semibold text-blue-800">Zaman Serisi Ayarları</span>
+                                    <span class="text-sm font-semibold text-blue-800">Gelecek Tahmini Ayarlar\u0131</span>
                                 </div>
-                                <p class="text-xs text-blue-600">Zaman serisi tahmini kronolojik sıralama gerektirir. Rastgele bölme yapılmaz, satırlar silinmez.</p>
+                                <p class="text-xs text-blue-600">Gelecek tahmini kronolojik s\u0131ralama gerektirir. Verileriniz zaman s\u0131ras\u0131na g\u00f6re i\u015flenir.</p>
                             </div>
                             <div class="grid grid-cols-3 gap-4">
                                 <div>
-                                    <label class="block text-sm font-medium text-slate-600 mb-1.5">Zaman Damgası Sütunu <span class="text-danger-500">*</span></label>
+                                    <label class="block text-sm font-medium text-slate-600 mb-1.5">Zaman S\u00fctunu <span class="text-danger-500">*</span></label>
                                     <select class="input-field" id="timestamp-col"></select>
+                                    <p class="text-xs text-slate-400 mt-1">Tarih veya zaman bilgisi olan s\u00fctun</p>
                                 </div>
                                 <div>
-                                    <label class="block text-sm font-medium text-slate-600 mb-1.5">Seri ID Sütunu <span class="text-slate-400">(opsiyonel)</span></label>
-                                    <select class="input-field" id="item-id-col"><option value="">— Tekli seri —</option></select>
+                                    <label class="block text-sm font-medium text-slate-600 mb-1.5">Grup S\u00fctunu <span class="text-slate-400">(opsiyonel)</span></label>
+                                    <select class="input-field" id="item-id-col"><option value="">\u2014 Tekli seri \u2014</option></select>
+                                    <p class="text-xs text-slate-400 mt-1">Birden fazla seri varsa ay\u0131rt edici s\u00fctun</p>
                                 </div>
                                 <div>
-                                    <label class="block text-sm font-medium text-slate-600 mb-1.5">Tahmin Uzunluğu (adım)</label>
+                                    <label class="block text-sm font-medium text-slate-600 mb-1.5">Ka\u00e7 Ad\u0131m \u0130leri Tahmin?</label>
                                     <input class="input-field" type="number" id="prediction-length" value="10" min="1" max="500">
                                 </div>
                             </div>
                         </div>
                         <button class="btn-primary w-full text-center flex items-center justify-center gap-2 py-3" onclick="startTraining()">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                            Eğitimi Başlat
+                            Analizi Ba\u015flat
                         </button>
                     </div>
                 </div>
@@ -733,12 +737,12 @@
                 <div id="train-step3" class="hidden">
                     <div class="card p-10 text-center">
                         <div class="spinner mx-auto mb-5"></div>
-                        <h3 class="font-bold text-xl text-slate-800 mb-2">Eğitim Devam Ediyor...</h3>
-                        <p class="text-slate-500 text-sm mb-4">AutoGluon verileriniz için en iyi modelleri buluyor</p>
+                        <h3 class="font-bold text-xl text-slate-800 mb-2">Analiz yap\u0131l\u0131yor...</h3>
+                        <p class="text-slate-500 text-sm mb-4">Verileriniz analiz ediliyor, en iyi sonu\u00e7lar bulunuyor</p>
                         <div class="progress-bar w-72 mx-auto">
                             <div class="progress-bar-fill" id="train-progress" style="width: 10%"></div>
                         </div>
-                        <p class="text-slate-400 text-xs mt-3" id="train-status-text">Veriler hazırlanıyor...</p>
+                        <p class="text-slate-400 text-xs mt-3" id="train-status-text">Veriler haz\u0131rlan\u0131yor...</p>
                     </div>
                 </div>
             </div>
@@ -748,14 +752,14 @@
                 <div class="card p-6 mb-6">
                     <h3 class="font-semibold text-slate-800 mb-4 flex items-center gap-2">
                         <span class="w-7 h-7 rounded-full bg-purple-500 text-white text-xs flex items-center justify-center font-bold">1</span>
-                        Değişken Şeması Tanımla
+                        De\u011ferlendirme Kriterleri
                     </h3>
-                    <p class="text-xs text-slate-500 mb-3">LLM'in her ses dosyasından çıkarmasını istediğiniz değişkenleri tanımlayın.</p>
+                    <p class="text-xs text-slate-500 mb-3">Her \u00e7a\u011fr\u0131 kayd\u0131nda neleri \u00f6l\u00e7mek istiyorsunuz?</p>
                     <div id="schema-builder">
                         <div id="schema-rows"></div>
                         <button class="btn-secondary btn-sm mt-2 flex items-center gap-1" onclick="addSchemaRow()">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                            Değişken Ekle
+                            Kriter Ekle
                         </button>
                     </div>
                 </div>
@@ -763,41 +767,42 @@
                 <div class="card p-6 mb-6">
                     <h3 class="font-semibold text-slate-800 mb-4 flex items-center gap-2">
                         <span class="w-7 h-7 rounded-full bg-purple-500 text-white text-xs flex items-center justify-center font-bold">2</span>
-                        Dil & Değerlendirme Prompt'u
+                        De\u011ferlendirme Talimat\u0131
                     </h3>
                     <div class="grid grid-cols-2 gap-4 mb-4">
                         <div>
-                            <label class="block text-sm font-medium text-slate-600 mb-1.5">Model Adı</label>
-                            <input class="input-field" id="audio-model-name" placeholder="Örn: Müşteri Memnuniyet Analizi">
+                            <label class="block text-sm font-medium text-slate-600 mb-1.5">Analiz Ad\u0131</label>
+                            <input class="input-field" id="audio-model-name" placeholder="\u00d6rn: M\u00fc\u015fteri Memnuniyet Analizi">
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-slate-600 mb-1.5">Ses Dili</label>
                             <select class="input-field" id="audio-language">
-                                <option value="turkish">Türkçe</option>
-                                <option value="english">İngilizce</option>
+                                <option value="turkish">T\u00fcrk\u00e7e</option>
+                                <option value="english">\u0130ngilizce</option>
                                 <option value="german">Almanca</option>
-                                <option value="french">Fransızca</option>
-                                <option value="spanish">İspanyolca</option>
-                                <option value="italian">İtalyanca</option>
+                                <option value="french">Frans\u0131zca</option>
+                                <option value="spanish">\u0130spanyolca</option>
+                                <option value="italian">\u0130talyanca</option>
                                 <option value="dutch">Hollandaca</option>
                                 <option value="portuguese">Portekizce</option>
-                                <option value="russian">Rusça</option>
-                                <option value="arabic">Arapça</option>
-                                <option value="chinese">Çince</option>
+                                <option value="russian">Rus\u00e7a</option>
+                                <option value="arabic">Arap\u00e7a</option>
+                                <option value="chinese">\u00c7ince</option>
                                 <option value="japanese">Japonca</option>
                                 <option value="korean">Korece</option>
                             </select>
                         </div>
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-slate-600 mb-1.5">Değerlendirme Prompt'u</label>
-                        <textarea class="input-field" id="audio-prompt" rows="6" placeholder="LLM'e vereceğiniz değerlendirme talimatı. Örn: Bu bir çağrı merkezi kaydıdır. Müşteri temsilcisinin performansını değerlendir. Müşterinin sorununun çözülüp çözülmediğini belirle..."></textarea>
+                        <label class="block text-sm font-medium text-slate-600 mb-1.5">Yapay zekaya talimat\u0131n\u0131z</label>
+                        <textarea class="input-field" id="audio-prompt" rows="6" placeholder="\u00d6rne\u011fin: Bu bir \u00e7a\u011fr\u0131 merkezi kayd\u0131d\u0131r. Temsilcinin m\u00fc\u015fteriye kar\u015f\u0131 tutumunu de\u011ferlendir. Sorunun \u00e7\u00f6z\u00fcl\u00fcp \u00e7\u00f6z\u00fclmedi\u011fini belirle..."></textarea>
+                        <p class="text-xs text-slate-400 mt-1">Her ses kayd\u0131 i\u00e7in yapay zekadan ne yapmas\u0131n\u0131 istedi\u011finizi yaz\u0131n</p>
                     </div>
                     <div class="mt-3">
-                        <label class="block text-sm font-medium text-slate-600 mb-1.5">Görünürlük</label>
+                        <label class="block text-sm font-medium text-slate-600 mb-1.5">Kimler G\u00f6rs\u00fcn?</label>
                         <select class="input-field" id="audio-visibility" style="width: 200px;">
-                            <option value="public">Herkese Açık</option>
-                            <option value="private">Özel (Sadece Ben)</option>
+                            <option value="public">Herkes G\u00f6rebilsin</option>
+                            <option value="private">Sadece Ben G\u00f6reyim</option>
                         </select>
                     </div>
                 </div>
@@ -805,7 +810,7 @@
                 <div class="card p-6 mb-6">
                     <h3 class="font-semibold text-slate-800 mb-4 flex items-center gap-2">
                         <span class="w-7 h-7 rounded-full bg-purple-500 text-white text-xs flex items-center justify-center font-bold">3</span>
-                        Ses Dosyalarını Yükle & Gerçek Değerleri Gir
+                        Ses Dosyalar\u0131n\u0131 Y\u00fckleyin
                     </h3>
                     <div class="upload-zone mb-4" id="audio-upload-zone"
                          onclick="document.getElementById('audio-files-input').click()"
@@ -815,8 +820,8 @@
                         <svg class="mx-auto mb-3" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="1.5">
                             <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>
                         </svg>
-                        <p class="text-slate-600 font-medium">Ses dosyalarını buraya sürükleyin veya tıklayarak seçin</p>
-                        <p class="text-slate-400 text-sm mt-1">.wav ve .mp3 dosyaları desteklenir (birden fazla seçilebilir)</p>
+                        <p class="text-slate-600 font-medium">Ses dosyalar\u0131n\u0131 buraya s\u00fcr\u00fckleyin veya t\u0131klayarak se\u00e7in</p>
+                        <p class="text-slate-400 text-sm mt-1">.wav ve .mp3 dosyalar\u0131 desteklenir (birden fazla se\u00e7ilebilir)</p>
                     </div>
                     <input type="file" id="audio-files-input" accept=".wav,.mp3,.m4a,.ogg,.flac" multiple class="hidden" onchange="handleAudioFileSelect(this)">
 
@@ -825,18 +830,18 @@
 
                 <button class="btn-primary w-full text-center flex items-center justify-center gap-2 py-3 mb-6" id="start-audio-eval-btn" onclick="startAudioEvaluation()">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                    Değerlendirmeyi Başlat
+                    Analizi Ba\u015flat
                 </button>
 
                 <div id="audio-eval-progress" class="hidden">
                     <div class="card p-10 text-center">
                         <div class="spinner mx-auto mb-5"></div>
-                        <h3 class="font-bold text-xl text-slate-800 mb-2">Ses Değerlendirmesi Devam Ediyor...</h3>
-                        <p class="text-slate-500 text-sm mb-2">Transkripsiyon + LLM Analizi yapılıyor</p>
+                        <h3 class="font-bold text-xl text-slate-800 mb-2">Ses kay\u0131tlar\u0131 analiz ediliyor...</h3>
+                        <p class="text-slate-500 text-sm mb-2">Konu\u015fmalar yaz\u0131ya d\u00f6k\u00fcl\u00fcp de\u011ferlendiriliyor</p>
                         <div class="progress-bar w-72 mx-auto">
                             <div class="progress-bar-fill" id="audio-eval-bar" style="width: 5%"></div>
                         </div>
-                        <p class="text-slate-400 text-xs mt-3" id="audio-eval-status-text">Dosyalar işleniyor...</p>
+                        <p class="text-slate-400 text-xs mt-3" id="audio-eval-status-text">Dosyalar i\u015fleniyor...</p>
                     </div>
                 </div>
             </div>
@@ -866,11 +871,11 @@
                 headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {},
             });
             const data = await res.json();
-            if (data.error) { alert('Hata: ' + data.error); return; }
+            if (data.error) { alert('Bir sorun olu\u015ftu: ' + data.error); return; }
             uploadData = data;
             document.getElementById('train-step1').classList.add('hidden');
             document.getElementById('train-step2').classList.remove('hidden');
-            document.getElementById('file-info').textContent = `${data.filename} — ${data.columns.length} sütun`;
+            document.getElementById('file-info').textContent = `${data.filename} \u2014 ${data.columns.length} s\u00fctun`;
             const select = document.getElementById('target-col');
             select.innerHTML = data.columns.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
 
@@ -878,10 +883,10 @@
             const tsCol = document.getElementById('timestamp-col');
             const idCol = document.getElementById('item-id-col');
             if (tsCol) tsCol.innerHTML = data.columns.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
-            if (idCol) idCol.innerHTML = '<option value="">— Tekli seri —</option>' + data.columns.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+            if (idCol) idCol.innerHTML = '<option value="">\u2014 Tekli seri \u2014</option>' + data.columns.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
 
             renderPreviewTable(data.preview, data.columns);
-        } catch (err) { alert('Yükleme hatası: ' + err.message); }
+        } catch (err) { alert('Dosya y\u00fcklenirken bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
     }
 
     function renderPreviewTable(rows, columns) {
@@ -893,7 +898,7 @@
             columns.forEach(c => {
                 const val = row[c];
                 const isNull = val === null || val === undefined || val === '' || (typeof val === 'number' && !isFinite(val));
-                html += isNull ? `<td class="p-2 border-b border-slate-100 whitespace-nowrap text-slate-400 italic">BOŞ</td>`
+                html += isNull ? `<td class="p-2 border-b border-slate-100 whitespace-nowrap text-slate-400 italic">BO\u015e</td>`
                     : `<td class="p-2 text-slate-700 border-b border-slate-100 whitespace-nowrap max-w-32 truncate">${esc(val)}</td>`;
             });
             html += '</tr>';
@@ -910,7 +915,7 @@
             target_column: document.getElementById('target-col').value,
             task_type: taskType,
             preset: document.getElementById('preset').value,
-            model_name: document.getElementById('model-name').value || 'İsimsiz Model',
+            model_name: document.getElementById('model-name').value || '\u0130simsiz Analiz',
             visibility: document.getElementById('visibility').value,
         };
 
@@ -924,7 +929,7 @@
             if (predLen) payload.prediction_length = parseInt(predLen.value) || 10;
 
             if (!payload.timestamp_column) {
-                alert('Zaman serisi için zaman damgası sütunu seçmelisiniz.');
+                alert('Gelecek tahmini i\u00e7in bir zaman s\u00fctunu se\u00e7melisiniz.');
                 return;
             }
         }
@@ -935,14 +940,14 @@
         try {
             const res = await api('/api/train', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             if (res.error) {
-                alert('Eğitim hatası: ' + res.error);
+                alert('Bir sorun olu\u015ftu: ' + res.error);
                 document.getElementById('train-step2').classList.remove('hidden');
                 document.getElementById('train-step3').classList.add('hidden');
                 return;
             }
             pollTrainingStatus(res.job_id);
         } catch (err) {
-            alert('Eğitim hatası: ' + err.message);
+            alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
             document.getElementById('train-step2').classList.remove('hidden');
             document.getElementById('train-step3').classList.add('hidden');
         }
@@ -957,7 +962,7 @@
                 const res = await api(`/api/training/${jobId}/status`);
                 if (res.status === 'done') {
                     if (progressEl) progressEl.style.width = '100%';
-                    if (statusEl) statusEl.textContent = 'Eğitim tamamlandı!';
+                    if (statusEl) statusEl.textContent = 'Analiz tamamland\u0131!';
                     setTimeout(() => navigate(`/model/${res.model_id}/results`), 800);
                     return;
                 }
@@ -971,10 +976,10 @@
                                 <div class="mx-auto mb-4 w-14 h-14 rounded-full bg-red-100 flex items-center justify-center">
                                     <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#EF4444" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
                                 </div>
-                                <h3 class="font-bold text-xl text-red-700 mb-2">Eğitim Başarısız Oldu</h3>
+                                <h3 class="font-bold text-xl text-red-700 mb-2">Analiz Ba\u015far\u0131s\u0131z Oldu</h3>
                                 <div class="bg-red-50 border border-red-200 rounded-lg p-4 mb-5 text-left max-w-lg mx-auto">
-                                    <p class="text-red-700 text-sm break-words">${esc(errMsg.length > 300 ? errMsg.substring(0, 300) + '…' : errMsg)}</p>
-                                    ${isTorchCVE ? '<p class="text-red-600 text-xs mt-2 font-semibold">Çözüm: PyTorch sürümünü güncelleyin: pip install torch>=2.6.0</p>' : ''}
+                                    <p class="text-red-700 text-sm break-words">${esc(errMsg.length > 300 ? errMsg.substring(0, 300) + '\u2026' : errMsg)}</p>
+                                    ${isTorchCVE ? '<p class="text-red-600 text-xs mt-2 font-semibold">\u00c7\u00f6z\u00fcm: PyTorch s\u00fcr\u00fcm\u00fcn\u00fc g\u00fcncelleyin: pip install torch>=2.6.0</p>' : ''}
                                 </div>
                                 <button class="btn-primary" onclick="navigate('/train')">Tekrar Dene</button>
                             </div>`;
@@ -983,7 +988,7 @@
                 }
                 progress = Math.min(progress + Math.random() * 8, 90);
                 if (progressEl) progressEl.style.width = progress + '%';
-                const messages = ['Veriler temizleniyor...', 'XGBoost eğitiliyor...', 'LightGBM eğitiliyor...', 'Sinir ağları eğitiliyor...', 'Modeller değerlendiriliyor...', 'Metrikler hesaplanıyor...'];
+                const messages = ['Veriler inceleniyor...', 'Farkl\u0131 y\u00f6ntemler deneniyor...', 'En iyi sonu\u00e7 aran\u0131yor...', 'Sonu\u00e7lar hesaplan\u0131yor...', 'Veriler temizleniyor...', 'Sonu\u00e7lar kar\u015f\u0131la\u015ft\u0131r\u0131l\u0131yor...'];
                 if (statusEl) statusEl.textContent = messages[Math.floor(Math.random() * messages.length)];
                 setTimeout(poll, 2000);
             } catch { setTimeout(poll, 3000); }
@@ -1005,13 +1010,13 @@
         if (mode === 'audio') {
             mlPath.classList.add('hidden');
             audioPath.classList.remove('hidden');
-            btnMl.className = 'flex-1 py-3 px-4 rounded-xl text-sm font-semibold transition-all bg-slate-50 border-2 border-slate-200 text-slate-500';
-            btnAudio.className = 'flex-1 py-3 px-4 rounded-xl text-sm font-semibold transition-all bg-purple-50 border-2 border-purple-400 text-purple-700';
+            btnMl.className = 'flex-1 py-5 px-5 rounded-xl text-sm font-semibold transition-all bg-slate-50 border-2 border-slate-200 text-slate-500';
+            btnAudio.className = 'flex-1 py-5 px-5 rounded-xl text-sm font-semibold transition-all bg-purple-50 border-2 border-purple-400 text-purple-700';
         } else {
             mlPath.classList.remove('hidden');
             audioPath.classList.add('hidden');
-            btnMl.className = 'flex-1 py-3 px-4 rounded-xl text-sm font-semibold transition-all bg-brand-50 border-2 border-brand-400 text-brand-700';
-            btnAudio.className = 'flex-1 py-3 px-4 rounded-xl text-sm font-semibold transition-all bg-slate-50 border-2 border-slate-200 text-slate-500';
+            btnMl.className = 'flex-1 py-5 px-5 rounded-xl text-sm font-semibold transition-all bg-brand-50 border-2 border-brand-400 text-brand-700';
+            btnAudio.className = 'flex-1 py-5 px-5 rounded-xl text-sm font-semibold transition-all bg-slate-50 border-2 border-slate-200 text-slate-500';
         }
     }
 
@@ -1022,12 +1027,12 @@
         row.className = 'flex gap-3 items-center mb-2';
         row.id = `schema-row-${schemaRowCount}`;
         row.innerHTML = `
-            <input class="input-field flex-1" placeholder="Değişken adı (ör: isCustomerHappy)" data-schema="name" style="font-family: 'JetBrains Mono', monospace; font-size: 13px;">
+            <input class="input-field flex-1" placeholder="Kriter ad\u0131 (ornegin: musteri_memnun_mu)" data-schema="name" style="font-family: 'JetBrains Mono', monospace; font-size: 13px;">
             <select class="input-field" data-schema="type" style="width: 180px;">
-                <option value="classification">Sınıflandırma</option>
-                <option value="regression">Sayısal (Regresyon)</option>
+                <option value="classification">Evet/Hay\u0131r</option>
+                <option value="regression">Puanlama (1-10 gibi)</option>
             </select>
-            <button class="btn-danger-sm" onclick="this.parentElement.remove(); renderAudioGroundTruth();" title="Sil">✕</button>
+            <button class="btn-danger-sm" onclick="this.parentElement.remove(); renderAudioGroundTruth();" title="Sil">\u2715</button>
         `;
         row.querySelectorAll('input, select').forEach(el => {
             el.addEventListener('change', () => renderAudioGroundTruth());
@@ -1082,7 +1087,7 @@
             return;
         }
         const schema = getSchema();
-        let html = `<div class="text-xs text-slate-500 mb-2 font-semibold uppercase tracking-wider">${audioFiles.length} dosya yüklendi</div>`;
+        let html = `<div class="text-xs text-slate-500 mb-2 font-semibold uppercase tracking-wider">${audioFiles.length} dosya y\u00fcklendi</div>`;
         html += '<div class="space-y-3">';
         audioFiles.forEach((f, idx) => {
             const url = URL.createObjectURL(f);
@@ -1097,7 +1102,7 @@
                         <div class="text-xs text-slate-400">${sizeMB} MB</div>
                     </div>
                     <audio controls src="${url}" preload="metadata" style="height: 32px; max-width: 260px;"></audio>
-                    <button class="btn-danger-sm" onclick="removeAudioFile(${idx})" title="Sil">✕</button>
+                    <button class="btn-danger-sm" onclick="removeAudioFile(${idx})" title="Sil">\u2715</button>
                 </div>`;
 
             if (schema.length > 0) {
@@ -1105,8 +1110,8 @@
                 schema.forEach(v => {
                     const inputType = v.type === 'regression' ? 'number' : 'text';
                     html += `<div>
-                        <label class="block text-xs font-medium text-slate-500 mb-1">${esc(v.name)} <span class="tag ${v.type === 'classification' ? 'tag-green' : 'tag-orange'}" style="font-size:10px;">${v.type === 'classification' ? 'Sınıf.' : 'Sayısal'}</span></label>
-                        <input class="input-field text-sm" type="${inputType}" placeholder="Gerçek değer" data-actual-file="${esc(f.name)}" data-actual-var="${esc(v.name)}" ${inputType === 'number' ? 'step="any"' : ''}>
+                        <label class="block text-xs font-medium text-slate-500 mb-1">${esc(v.name)} <span class="tag ${v.type === 'classification' ? 'tag-green' : 'tag-orange'}" style="font-size:10px;">${v.type === 'classification' ? 'Evet/Hay\u0131r' : 'Puan'}</span></label>
+                        <input class="input-field text-sm" type="${inputType}" placeholder="Ger\u00e7ek de\u011fer" data-actual-file="${esc(f.name)}" data-actual-var="${esc(v.name)}" ${inputType === 'number' ? 'step="any"' : ''}>
                     </div>`;
                 });
                 html += '</div>';
@@ -1138,10 +1143,10 @@
 
     async function startAudioEvaluation() {
         const schema = getSchema();
-        if (!schema.length) return alert('En az bir değişken tanımlamalısınız.');
+        if (!schema.length) return alert('En az bir kriter tan\u0131mlamal\u0131s\u0131n\u0131z.');
         const prompt = document.getElementById('audio-prompt').value.trim();
-        if (!prompt) return alert('Değerlendirme prompt\'u gerekli.');
-        if (!audioFiles.length) return alert('En az bir ses dosyası yüklemelisiniz.');
+        if (!prompt) return alert('De\u011ferlendirme talimat\u0131 yazmal\u0131s\u0131n\u0131z.');
+        if (!audioFiles.length) return alert('En az bir ses dosyas\u0131 y\u00feklemelisiniz.');
 
         const modelName = document.getElementById('audio-model-name').value.trim() || `Ses Analizi ${new Date().toLocaleString('tr-TR')}`;
         const language = document.getElementById('audio-language').value;
@@ -1169,14 +1174,14 @@
             });
             const data = await res.json();
             if (data.error) {
-                alert('Hata: ' + data.error);
+                alert('Bir sorun olu\u015ftu: ' + data.error);
                 document.getElementById('start-audio-eval-btn').classList.remove('hidden');
                 document.getElementById('audio-eval-progress').classList.add('hidden');
                 return;
             }
             pollAudioEvalStatus(data.job_id);
         } catch (err) {
-            alert('Hata: ' + err.message);
+            alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
             document.getElementById('start-audio-eval-btn').classList.remove('hidden');
             document.getElementById('audio-eval-progress').classList.add('hidden');
         }
@@ -1190,12 +1195,12 @@
                 const res = await api(`/api/audio-evaluate/${jobId}/status`);
                 if (res.status === 'done') {
                     if (barEl) barEl.style.width = '100%';
-                    if (statusEl) statusEl.textContent = 'Değerlendirme tamamlandı!';
+                    if (statusEl) statusEl.textContent = 'Analiz tamamland\u0131!';
                     setTimeout(() => navigate(`/model/${res.model_id}/results`), 800);
                     return;
                 }
                 if (res.status === 'error') {
-                    if (statusEl) statusEl.textContent = 'Hata: ' + (res.error || 'Bilinmeyen');
+                    if (statusEl) statusEl.textContent = 'Bir sorun olu\u015ftu: ' + (res.error || 'Bilinmeyen');
                     if (barEl) barEl.style.background = '#EF4444';
                     return;
                 }
@@ -1203,8 +1208,8 @@
                 const processed = res.processed || 0;
                 const pct = Math.max(5, Math.round((processed / total) * 100));
                 if (barEl) barEl.style.width = pct + '%';
-                const msgs = ['Ses dosyası transkript ediliyor...', 'Whisper ile çözümleme yapılıyor...', 'LLM analizi çalıştırılıyor...', 'Yanıtlar değerlendiriliyor...'];
-                if (statusEl) statusEl.textContent = `${processed}/${total} dosya işlendi — ${msgs[Math.floor(Math.random() * msgs.length)]}`;
+                const msgs = ['Ses kayd\u0131 yaz\u0131ya d\u00f6k\u00fcl\u00fcyor...', 'Konu\u015fma metni \u00e7\u0131kar\u0131l\u0131yor...', 'De\u011ferlendirme yap\u0131l\u0131yor...', 'Sonu\u00e7lar hesaplan\u0131yor...'];
+                if (statusEl) statusEl.textContent = `${processed}/${total} dosya i\u015flendi \u2014 ${msgs[Math.floor(Math.random() * msgs.length)]}`;
                 setTimeout(poll, 2500);
             } catch { setTimeout(poll, 3000); }
         };
@@ -1226,13 +1231,13 @@
         for (const [varName, m] of Object.entries(metrics)) {
             if (m.type === 'classification') {
                 metricsHtml += `<div class="stat-card">
-                    <div class="text-slate-500 text-xs font-medium mb-1">${esc(varName)} <span class="tag tag-green" style="font-size:10px;">Sınıf.</span></div>
+                    <div class="text-slate-500 text-xs font-medium mb-1">${esc(varName)} <span class="tag tag-green" style="font-size:10px;">Evet/Hay\u0131r</span></div>
                     <div class="text-3xl font-bold ${m.accuracy >= 80 ? 'text-brand-600' : m.accuracy >= 60 ? 'text-warn-500' : 'text-danger-500'}">%${m.accuracy}</div>
-                    <div class="text-xs text-slate-400">${m.correct}/${m.n} doğru</div>
+                    <div class="text-xs text-slate-400">${m.correct}/${m.n} do\u011fru</div>
                 </div>`;
             } else {
                 metricsHtml += `<div class="stat-card">
-                    <div class="text-slate-500 text-xs font-medium mb-1">${esc(varName)} <span class="tag tag-orange" style="font-size:10px;">Sayısal</span></div>
+                    <div class="text-slate-500 text-xs font-medium mb-1">${esc(varName)} <span class="tag tag-orange" style="font-size:10px;">Puan</span></div>
                     <div class="text-2xl font-bold text-slate-800">MAE: ${m.mae !== undefined ? m.mae : '\u2014'}</div>
                     <div class="text-xs text-slate-400">RMSE: ${m.rmse !== undefined ? m.rmse : '\u2014'} \xb7 n=${m.n}</div>
                 </div>`;
@@ -1261,12 +1266,12 @@
 
         let schemaHeaders = '';
         schema.forEach(v => {
-            schemaHeaders += '<th>' + esc(v.name) + ' (Ger\u00e7ek)</th><th>' + esc(v.name) + ' (LLM)</th>';
+            schemaHeaders += '<th>' + esc(v.name) + ' (Ger\u00e7ek)</th><th>' + esc(v.name) + ' (Tahmin)</th>';
         });
 
         const promptSafe = esc(ca.prompt || '');
         const transcriptItems = rows.map((r, i) => {
-            const tSafe = esc(r.transcript || 'Transkript mevcut değil');
+            const tSafe = esc(r.transcript || 'Konu\u015fma metni mevcut de\u011fil');
             return '<details class="border border-slate-200 rounded-lg"><summary class="px-4 py-2 cursor-pointer text-sm font-medium text-slate-700 hover:bg-slate-50">' + esc(r.filename) + '</summary><div class="px-4 py-3 text-xs text-slate-600 bg-slate-25 border-t border-slate-100 whitespace-pre-wrap max-h-48 overflow-y-auto">' + tSafe + '</div></details>';
         }).join('');
 
@@ -1274,7 +1279,7 @@
         <div class="fade-in">
             <div class="text-sm text-slate-400 mb-4 flex items-center gap-1.5">
                 <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/')">Ana Sayfa</span><span>\u203a</span>
-                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/library')">K\u00fct\u00fcphane</span><span>\u203a</span>
+                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/library')">Analizlerim</span><span>\u203a</span>
                 <span class="text-slate-600">${esc(model.name)}</span>
             </div>
 
@@ -1286,22 +1291,22 @@
                     <div class="flex-1">
                         <div class="flex items-center gap-2 mb-1">
                             <h1 class="text-2xl font-bold text-slate-900">${esc(model.name)}</h1>
-                            <span class="tag tag-purple">\u00c7a\u011fr\u0131 Analizi</span>
+                            <span class="tag tag-purple">Ses Analizi</span>
                             <span class="tag ${model.visibility === 'private' ? 'tag-red' : 'tag-green'}">${model.visibility === 'private' ? '\u00d6zel' : 'Herkese A\u00e7\u0131k'}</span>
                         </div>
                         <p class="text-slate-500 text-sm">
-                            LLM-as-a-Judge \xb7 ${rows.length} ses dosyas\u0131 \xb7 ${schema.length} de\u011fi\u015fken \xb7 Whisper: ${esc(ca.whisper_model || '?')}
+                            ${rows.length} ses dosyas\u0131 \xb7 ${schema.length} kriter \xb7 Whisper: ${esc(ca.whisper_model || '?')}
                         </p>
-                        <p class="text-slate-400 text-xs mt-1">Olu\u015fturan: ${esc(model.owner || '\u2014')} \xb7 ${model.created_at ? new Date(model.created_at).toLocaleString('tr-TR') : ''}</p>
+                        <p class="text-slate-400 text-xs mt-1">Haz\u0131rlayan: ${esc(model.owner || '\u2014')} \xb7 ${model.created_at ? new Date(model.created_at).toLocaleString('tr-TR') : ''}</p>
                     </div>
                     <div class="flex gap-2 flex-shrink-0">
                         <button class="btn-primary btn-sm flex items-center gap-1.5" onclick="navigate('/model/${model.id}/predict-audio')">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                            Modeli Çalıştır
+                            Yeni Analiz \u00c7al\u0131\u015ft\u0131r
                         </button>
                         <button class="btn-secondary btn-sm flex items-center gap-1.5" onclick="downloadCallAnalysisCSV('${model.id}')">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                            Sonuçları CSV İndir
+                            Sonu\u00e7lar\u0131 CSV \u0130ndir
                         </button>
                         ${isOwnerOrAdmin ? `<button class="btn-danger-sm" onclick="deleteModel('${model.id}', '${escAttr(model.name)}')">Sil</button>` : ''}
                     </div>
@@ -1309,31 +1314,31 @@
             </div>
 
             <div class="grid grid-cols-${metricCount} gap-4 mb-6">
-                ${ca.overall_accuracy != null ? '<div class="featured-card" style="background: linear-gradient(135deg, #FAF5FF, #fff); border-color: #C4B5FD;"><div class="text-slate-500 text-xs font-medium mb-1">Genel Do\u011fruluk</div><div class="text-3xl font-bold '+(ca.overall_accuracy >= 80 ? 'text-brand-600' : ca.overall_accuracy >= 60 ? 'text-warn-500' : 'text-danger-500')+'">%'+ca.overall_accuracy+'</div></div>' : ''}
+                ${ca.overall_accuracy != null ? '<div class="featured-card" style="background: linear-gradient(135deg, #FAF5FF, #fff); border-color: #C4B5FD;"><div class="text-slate-500 text-xs font-medium mb-1">Genel Ba\u015far\u0131</div><div class="text-3xl font-bold '+(ca.overall_accuracy >= 80 ? 'text-brand-600' : ca.overall_accuracy >= 60 ? 'text-warn-500' : 'text-danger-500')+'">%'+ca.overall_accuracy+'</div></div>' : ''}
                 ${ca.overall_mae != null ? '<div class="featured-card" style="background: linear-gradient(135deg, #FFF7ED, #fff); border-color: #FED7AA;"><div class="text-slate-500 text-xs font-medium mb-1">Genel MAE</div><div class="text-3xl font-bold text-warn-600">'+ca.overall_mae+'</div></div>' : ''}
                 ${metricsHtml}
             </div>
 
             <div class="card p-5 mb-6">
-                <h3 class="font-semibold text-slate-800 mb-2 text-sm">Kullan\u0131lan De\u011ferlendirme Prompt'u</h3>
+                <h3 class="font-semibold text-slate-800 mb-2 text-sm">Kullan\u0131lan Talimat</h3>
                 <pre class="text-xs bg-slate-50 p-4 rounded-lg text-slate-600 whitespace-pre-wrap border border-slate-200 max-h-40 overflow-y-auto">${promptSafe}</pre>
-                <div class="text-xs text-slate-400 mt-2">Dil: ${esc(ca.language || '?')} \xb7 LLM: ${esc(ca.llm_endpoint || '?')}</div>
+                <div class="text-xs text-slate-400 mt-2">Dil: ${esc(ca.language || '?')} \xb7 Model: ${esc(ca.llm_endpoint || '?')}</div>
             </div>
 
             <div class="card-flat p-5 mb-6 overflow-x-auto">
-                <h3 class="font-semibold text-slate-800 mb-4">Dosya Baz\u0131nda Sonu\u00e7lar</h3>
+                <h3 class="font-semibold text-slate-800 mb-4">Detayl\u0131 Sonu\u00e7lar</h3>
                 <table class="data-table">
                     <thead><tr>
                         <th>Dosya</th>
                         ${schemaHeaders}
-                        <th>LLM A\u00e7\u0131klamas\u0131</th>
+                        <th>De\u011ferlendirme A\u00e7\u0131klamas\u0131</th>
                     </tr></thead>
                     <tbody>${rowsHtml}</tbody>
                 </table>
             </div>
 
             <div class="card-flat p-5 mb-6">
-                <h3 class="font-semibold text-slate-800 mb-4">Transkriptler</h3>
+                <h3 class="font-semibold text-slate-800 mb-4">Konu\u015fma Metinleri</h3>
                 <div class="space-y-2">${transcriptItems}</div>
             </div>
 
@@ -1341,9 +1346,9 @@
                 <div class="flex items-center justify-between">
                     <h3 class="font-semibold text-slate-800 text-sm flex items-center gap-2">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                        Açıklanabilirlik Analizi
+                        Nas\u0131l Karar Veriyor?
                     </h3>
-                    <button class="btn-primary btn-sm" id="run-ca-explain-btn" onclick="loadExplainability('${model.id}', 'LLM-as-a-Judge')">Analizi Başlat</button>
+                    <button class="btn-primary btn-sm" id="run-ca-explain-btn" onclick="loadExplainability('${model.id}', 'LLM-as-a-Judge')">Analizi Ba\u015flat</button>
                 </div>
             </div>
             <div id="ca-explain-result"></div>
@@ -1367,15 +1372,15 @@
         predictAudioFiles = [];
 
         let schemaHtml = schema.map(v =>
-            `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium ${v.type === 'classification' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}">${esc(v.name)} <span class="opacity-60">${v.type === 'classification' ? 'Sınıf.' : 'Sayısal'}</span></span>`
+            `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium ${v.type === 'classification' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}">${esc(v.name)} <span class="opacity-60">${v.type === 'classification' ? 'Evet/Hay\u0131r' : 'Puan'}</span></span>`
         ).join(' ');
 
         app().innerHTML = `
         <div class="fade-in">
             <div class="text-sm text-slate-400 mb-4 flex items-center gap-1.5">
-                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/')">Ana Sayfa</span><span>›</span>
-                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/library')">Kütüphane</span><span>›</span>
-                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/model/${modelId}/results')">${esc(model.name)}</span><span>›</span>
+                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/')">Ana Sayfa</span><span>\u203a</span>
+                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/library')">Analizlerim</span><span>\u203a</span>
+                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/model/${modelId}/results')">${esc(model.name)}</span><span>\u203a</span>
                 <span class="text-slate-600">Tahmin</span>
             </div>
 
@@ -1390,16 +1395,16 @@
                             <span class="tag tag-purple">Tahmin</span>
                         </div>
                         <p class="text-slate-500 text-sm">
-                            Yeni ses dosyaları yükleyerek bu modelin kayıtlı prompt ve değişkenleriyle tahmin yapın. Sonuçlar CSV olarak indirilir.
+                            Yeni ses dosyalar\u0131 y\u00fckleyerek bu analizin kay\u0131tl\u0131 ayarlar\u0131yla tahmin yap\u0131n. Sonu\u00e7lar CSV olarak indirilir.
                         </p>
                     </div>
                 </div>
             </div>
 
             <div class="card p-5 mb-6">
-                <h3 class="font-semibold text-slate-800 mb-3 text-sm">Sabit Model Yapılandırması</h3>
+                <h3 class="font-semibold text-slate-800 mb-3 text-sm">Analiz Yap\u0131land\u0131rmas\u0131</h3>
                 <div class="mb-3">
-                    <div class="text-xs font-medium text-slate-500 mb-1.5">Değişkenler</div>
+                    <div class="text-xs font-medium text-slate-500 mb-1.5">Kriterler</div>
                     <div class="flex flex-wrap gap-2">${schemaHtml}</div>
                 </div>
                 <div class="mb-3">
@@ -1407,7 +1412,7 @@
                     <span class="text-sm text-slate-700 font-medium">${esc(ca.language || 'turkish')}</span>
                 </div>
                 <div>
-                    <div class="text-xs font-medium text-slate-500 mb-1.5">Değerlendirme Prompt'u</div>
+                    <div class="text-xs font-medium text-slate-500 mb-1.5">De\u011ferlendirme Talimat\u0131</div>
                     <pre class="text-xs bg-slate-50 p-3 rounded-lg text-slate-600 whitespace-pre-wrap border border-slate-200 max-h-32 overflow-y-auto">${promptSafe}</pre>
                 </div>
             </div>
@@ -1415,7 +1420,7 @@
             <div class="card p-6 mb-6">
                 <h3 class="font-semibold text-slate-800 mb-4 flex items-center gap-2">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
-                    Ses Dosyalarını Yükle
+                    Ses Dosyalar\u0131n\u0131 Y\u00fckleyin
                 </h3>
                 <div class="upload-zone mb-4" id="predict-audio-upload-zone"
                      onclick="document.getElementById('predict-audio-files-input').click()"
@@ -1425,8 +1430,8 @@
                     <svg class="mx-auto mb-3" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="1.5">
                         <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>
                     </svg>
-                    <p class="text-slate-600 font-medium">Ses dosyalarını buraya sürükleyin veya tıklayarak seçin</p>
-                    <p class="text-slate-400 text-sm mt-1">.wav, .mp3, .m4a, .ogg, .flac dosyaları desteklenir</p>
+                    <p class="text-slate-600 font-medium">Ses dosyalar\u0131n\u0131 buraya s\u00fcr\u00fckleyin veya t\u0131klayarak se\u00e7in</p>
+                    <p class="text-slate-400 text-sm mt-1">.wav, .mp3, .m4a, .ogg, .flac dosyalar\u0131 desteklenir</p>
                 </div>
                 <input type="file" id="predict-audio-files-input" accept=".wav,.mp3,.m4a,.ogg,.flac" multiple class="hidden" onchange="handlePredictAudioFileSelect(this)">
                 <div id="predict-audio-files-list"></div>
@@ -1434,18 +1439,18 @@
 
             <button class="btn-primary w-full text-center flex items-center justify-center gap-2 py-3 mb-6" id="start-audio-predict-btn" onclick="startAudioPrediction('${modelId}')">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                Tahmini Başlat
+                Analizi Ba\u015flat
             </button>
 
             <div id="audio-predict-progress" class="hidden">
                 <div class="card p-10 text-center">
                     <div class="spinner mx-auto mb-5"></div>
-                    <h3 class="font-bold text-xl text-slate-800 mb-2">Ses Tahmini Devam Ediyor...</h3>
-                    <p class="text-slate-500 text-sm mb-2">Transkripsiyon + LLM Analizi yapılıyor</p>
+                    <h3 class="font-bold text-xl text-slate-800 mb-2">Ses kay\u0131tlar\u0131 analiz ediliyor...</h3>
+                    <p class="text-slate-500 text-sm mb-2">Konu\u015fmalar yaz\u0131ya d\u00f6k\u00fcl\u00fcp de\u011ferlendiriliyor</p>
                     <div class="progress-bar w-72 mx-auto">
                         <div class="progress-bar-fill" id="audio-predict-bar" style="width: 5%"></div>
                     </div>
-                    <p class="text-slate-400 text-xs mt-3" id="audio-predict-status-text">Dosyalar işleniyor...</p>
+                    <p class="text-slate-400 text-xs mt-3" id="audio-predict-status-text">Dosyalar i\u015fleniyor...</p>
                 </div>
             </div>
 
@@ -1485,7 +1490,7 @@
     function renderPredictAudioFilesList() {
         const container = document.getElementById('predict-audio-files-list');
         if (!predictAudioFiles.length) { container.innerHTML = ''; return; }
-        let html = `<div class="text-xs text-slate-500 mb-2 font-semibold uppercase tracking-wider">${predictAudioFiles.length} dosya yüklendi</div><div class="space-y-2">`;
+        let html = `<div class="text-xs text-slate-500 mb-2 font-semibold uppercase tracking-wider">${predictAudioFiles.length} dosya y\u00fcklendi</div><div class="space-y-2">`;
         predictAudioFiles.forEach((f, idx) => {
             const url = URL.createObjectURL(f);
             const sizeMB = (f.size / 1024 / 1024).toFixed(1);
@@ -1493,7 +1498,7 @@
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
                 <div class="flex-1"><span class="text-sm font-medium text-slate-800">${esc(f.name)}</span> <span class="text-xs text-slate-400">${sizeMB} MB</span></div>
                 <audio controls src="${url}" preload="metadata" style="height: 28px; max-width: 220px;"></audio>
-                <button class="btn-danger-sm text-xs" onclick="removePredictAudioFile(${idx})">✕</button>
+                <button class="btn-danger-sm text-xs" onclick="removePredictAudioFile(${idx})">\u2715</button>
             </div>`;
         });
         html += '</div>';
@@ -1501,7 +1506,7 @@
     }
 
     async function startAudioPrediction(modelId) {
-        if (!predictAudioFiles.length) return alert('En az bir ses dosyası yüklemelisiniz.');
+        if (!predictAudioFiles.length) return alert('En az bir ses dosyas\u0131 y\u00feklemelisiniz.');
 
         const fd = new FormData();
         predictAudioFiles.forEach(f => fd.append('audio_files', f, f.name));
@@ -1517,14 +1522,14 @@
             });
             const data = await res.json();
             if (data.error) {
-                alert('Hata: ' + data.error);
+                alert('Bir sorun olu\u015ftu: ' + data.error);
                 document.getElementById('start-audio-predict-btn').classList.remove('hidden');
                 document.getElementById('audio-predict-progress').classList.add('hidden');
                 return;
             }
             pollAudioPredictStatus(data.job_id, modelId);
         } catch (err) {
-            alert('Hata: ' + err.message);
+            alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
             document.getElementById('start-audio-predict-btn').classList.remove('hidden');
             document.getElementById('audio-predict-progress').classList.add('hidden');
         }
@@ -1539,12 +1544,12 @@
                 const res = await api(`/api/audio-predict/${jobId}/status`);
                 if (res.status === 'done') {
                     if (barEl) barEl.style.width = '100%';
-                    if (statusEl) statusEl.textContent = 'Tahmin tamamlandı!';
+                    if (statusEl) statusEl.textContent = 'Tahmin tamamland\u0131!';
                     setTimeout(() => showAudioPredictResults(jobId, res.row_results || [], modelId), 600);
                     return;
                 }
                 if (res.status === 'error') {
-                    if (statusEl) statusEl.textContent = 'Hata: ' + (res.error || 'Bilinmeyen');
+                    if (statusEl) statusEl.textContent = 'Bir sorun olu\u015ftu: ' + (res.error || 'Bilinmeyen');
                     if (barEl) barEl.style.background = '#EF4444';
                     document.getElementById('start-audio-predict-btn').classList.remove('hidden');
                     return;
@@ -1553,8 +1558,8 @@
                 const processed = res.processed || 0;
                 const pct = Math.max(5, Math.round((processed / total) * 100));
                 if (barEl) barEl.style.width = pct + '%';
-                const msgs = ['Ses dosyası transkript ediliyor...', 'Whisper ile çözümleme yapılıyor...', 'LLM analizi çalıştırılıyor...', 'Yanıtlar değerlendiriliyor...'];
-                if (statusEl) statusEl.textContent = `${processed}/${total} dosya işlendi — ${msgs[Math.floor(Math.random() * msgs.length)]}`;
+                const msgs = ['Ses kayd\u0131 yaz\u0131ya d\u00f6k\u00fcl\u00fcyor...', 'Konu\u015fma metni \u00e7\u0131kar\u0131l\u0131yor...', 'De\u011ferlendirme yap\u0131l\u0131yor...', 'Sonu\u00e7lar hesaplan\u0131yor...'];
+                if (statusEl) statusEl.textContent = `${processed}/${total} dosya i\u015flendi \u2014 ${msgs[Math.floor(Math.random() * msgs.length)]}`;
                 setTimeout(poll, 2500);
             } catch { setTimeout(poll, 3000); }
         };
@@ -1574,16 +1579,16 @@
             varNames = Object.keys(pred);
             varNames.forEach(vn => { headers += `<th>${esc(vn)}</th>`; });
         }
-        headers += '<th>LLM Açıklaması</th>';
+        headers += '<th>De\u011ferlendirme A\u00e7\u0131klamas\u0131</th>';
 
         let tbody = '';
         rowResults.forEach(r => {
-            const statusIcon = r.error ? '❌' : '✅';
+            const statusIcon = r.error ? '\u274c' : '\u2705';
             let cells = `<td class="text-sm">${statusIcon} ${esc(r.filename)}</td>`;
             varNames.forEach(vn => {
-                cells += `<td class="text-xs font-mono">${(r.predicted || {})[vn] != null ? esc((r.predicted || {})[vn]) : '—'}</td>`;
+                cells += `<td class="text-xs font-mono">${(r.predicted || {})[vn] != null ? esc((r.predicted || {})[vn]) : '\u2014'}</td>`;
             });
-            const explanation = r.summary_reasoning || r.error || '—';
+            const explanation = r.summary_reasoning || r.error || '\u2014';
             const explanationSafe = esc(explanation);
             cells += `<td class="text-xs text-slate-500 max-w-xs truncate" title="${explanationSafe}">${explanationSafe}</td>`;
             tbody += `<tr>${cells}</tr>`;
@@ -1596,21 +1601,21 @@
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
                     </div>
                     <div>
-                        <h3 class="font-bold text-lg text-slate-900">Tahmin Tamamlandı</h3>
-                        <p class="text-slate-500 text-sm">${rowResults.length} ses dosyası başarıyla işlendi.</p>
+                        <h3 class="font-bold text-lg text-slate-900">Tahmin Tamamland\u0131</h3>
+                        <p class="text-slate-500 text-sm">${rowResults.length} ses dosyas\u0131 ba\u015far\u0131yla i\u015flendi.</p>
                     </div>
                     <div class="ml-auto">
                         <a href="${API}/api/audio-predict/${jobId}/download-csv" class="btn-primary flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold no-underline" target="_blank"
                            ${authToken ? `onclick="event.preventDefault(); downloadAudioPredictCSV('${jobId}')"` : ''}>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                            CSV İndir
+                            CSV \u0130ndir
                         </a>
                     </div>
                 </div>
             </div>
 
             <div class="card-flat p-5 mb-6 overflow-x-auto">
-                <h3 class="font-semibold text-slate-800 mb-4">Sonuç Önizlemesi</h3>
+                <h3 class="font-semibold text-slate-800 mb-4">Sonu\u00e7 \u00d6nizlemesi</h3>
                 <table class="data-table">
                     <thead><tr>${headers}</tr></thead>
                     <tbody>${tbody}</tbody>
@@ -1622,7 +1627,7 @@
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
                     Yeni Tahmin Yap
                 </button>
-                <button class="btn-secondary" onclick="navigate('/model/${modelId}/results')">Modele Dön</button>
+                <button class="btn-secondary" onclick="navigate('/model/${modelId}/results')">Analize D\u00f6n</button>
             </div>
         `;
     }
@@ -1632,7 +1637,7 @@
             const res = await fetch(API + `/api/audio-predict/${jobId}/download-csv`, {
                 headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {},
             });
-            if (!res.ok) { alert('İndirme hatası'); return; }
+            if (!res.ok) { alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); return; }
             const blob = await res.blob();
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -1645,7 +1650,7 @@
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
         } catch (err) {
-            alert('İndirme hatası: ' + err.message);
+            alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
         }
     }
 
@@ -1663,8 +1668,8 @@
         app().innerHTML = `
         <div class="fade-in">
             <div class="text-sm text-slate-400 mb-4 flex items-center gap-1.5">
-                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/')">Ana Sayfa</span><span>›</span>
-                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/library')">Kütüphane</span><span>›</span>
+                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/')">Ana Sayfa</span><span>\u203a</span>
+                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/library')">Analizlerim</span><span>\u203a</span>
                 <span class="text-slate-600">${esc(model.name)}</span>
             </div>
 
@@ -1676,29 +1681,29 @@
                     <div class="flex-1">
                         <div class="flex items-center gap-2 mb-1">
                             <h1 class="text-2xl font-bold text-slate-900">${esc(model.name)}</h1>
-                            ${model.endorsed ? '<span class="endorsed-badge">Onaylı</span>' : ''}
-                            <span class="tag ${model.visibility === 'private' ? 'tag-red' : 'tag-green'}">${model.visibility === 'private' ? 'Özel' : 'Herkese Açık'}</span>
+                            ${model.endorsed ? '<span class="endorsed-badge">Onayl\u0131</span>' : ''}
+                            <span class="tag ${model.visibility === 'private' ? 'tag-red' : 'tag-green'}">${model.visibility === 'private' ? '\u00d6zel' : 'Herkese A\u00e7\u0131k'}</span>
                         </div>
                         <p class="text-slate-500 text-sm">
-                            ${model.task_type === 'classification' ? 'Sınıflandırma' : model.task_type === 'timeseries' ? 'Zaman Serisi Tahmini' : model.task_type === 'text' ? 'Sınıflandırma' : model.task_type === 'call_analysis' ? 'Çağrı Analizi' : 'Regresyon'} · Hedef: <span class="font-mono text-slate-700">${esc(model.target_column)}</span> ·
-                            ${model.num_rows} satır · ${submodels.length} alt model
+                            ${model.task_type === 'classification' ? 'Kategorileme' : model.task_type === 'timeseries' ? 'Gelecek Tahmini' : model.task_type === 'text' ? 'Kategorileme' : model.task_type === 'call_analysis' ? 'Ses Analizi' : 'Say\u0131sal Tahmin'} \u00b7 Hedef: <span class="font-mono text-slate-700">${esc(model.target_column)}</span> \u00b7
+                            ${model.num_rows} sat\u0131r \u00b7 ${submodels.length} y\u00f6ntem
                         </p>
                         <p class="text-slate-400 text-xs mt-1">
-                            <strong class="text-slate-600">${model.num_test_rows || '?'} satırlık test seti</strong> üzerinde değerlendirildi
-                            · ${model.num_train_rows || '?'} satır ile eğitildi
-                            · Oluşturan: ${esc(model.owner || '—')}
+                            <strong class="text-slate-600">${model.num_test_rows || '?'} sat\u0131rl\u0131k test seti</strong> \u00fczerinde de\u011ferlendirildi
+                            \u00b7 ${model.num_train_rows || '?'} sat\u0131r ile e\u011fitildi
+                            \u00b7 Haz\u0131rlayan: ${esc(model.owner || '\u2014')}
                         </p>
                     </div>
                     <div class="flex gap-2 flex-shrink-0">
                         ${isOwnerOrAdmin ? `
                             <select class="input-field text-xs py-1.5 px-3" style="width:auto;" onchange="setVisibility('${modelId}', this.value)">
-                                <option value="public" ${model.visibility !== 'private' ? 'selected' : ''}>Herkese Açık</option>
-                                <option value="private" ${model.visibility === 'private' ? 'selected' : ''}>Özel</option>
+                                <option value="public" ${model.visibility !== 'private' ? 'selected' : ''}>Herkese A\u00e7\u0131k</option>
+                                <option value="private" ${model.visibility === 'private' ? 'selected' : ''}>\u00d6zel</option>
                             </select>
                         ` : ''}
                         ${isAdmin() ? `
                             <button class="btn-sm ${model.endorsed ? 'btn-danger-sm' : 'btn-export'}" onclick="toggleEndorse('${modelId}', ${!model.endorsed})">
-                                ${model.endorsed ? 'Onayı Kaldır' : 'Onayla'}
+                                ${model.endorsed ? 'Onay\u0131 Kald\u0131r' : 'Onayla'}
                             </button>
                         ` : ''}
                         ${isOwnerOrAdmin ? `<button class="btn-danger-sm" onclick="deleteModel('${modelId}', '${escAttr(model.name)}')">Sil</button>` : ''}
@@ -1707,49 +1712,46 @@
             </div>
 
             <div class="card p-6 mb-6">
-                <h3 class="font-semibold text-slate-800 mb-4">Alt Model Performansı — ${model.task_type === 'timeseries' ? 'MASE (düşük = iyi)' : 'Test Skoru'}</h3>
+                <h3 class="font-semibold text-slate-800 mb-4">Analiz Sonu\u00e7lar\u0131 \u2014 ${model.task_type === 'timeseries' ? 'MASE (d\u00fc\u015f\u00fck = iyi)' : 'Ba\u015far\u0131 Puan\u0131'}</h3>
                 <div style="height: ${Math.max(300, submodels.length * 40)}px;"><canvas id="results-chart"></canvas></div>
             </div>
 
             <div class="card-flat overflow-hidden mb-6">
                 <div class="p-4 bg-slate-50 border-b border-slate-200">
                     <p class="text-sm text-slate-600">${model.task_type === 'timeseries'
-                        ? 'MASE (Mean Absolute Scaled Error): 1.0\'den düşük = naif modelden iyi. Tahmin yapmak için bir alt modele tıklayın.'
-                        : 'Tahmin yapmak için bir alt modele tıklayın. Dışa aktarmak için sağdaki butonları kullanın.'}</p>
+                        ? 'MASE (Mean Absolute Scaled Error): 1.0\'den d\u00fc\u015f\u00fck = iyi sonu\u00e7. Bir y\u00f6nteme t\u0131klayarak tahmin yap\u0131n.'
+                        : 'Bir y\u00f6nteme t\u0131klayarak tahmin yap\u0131n. Otomatik \u00e7al\u0131\u015ft\u0131rmak i\u00e7in sa\u011fdaki butonlar\u0131 kullan\u0131n.'}</p>
                 </div>
                 <table class="data-table">
                     <thead><tr>
-                        <th>Alt Model</th>
-                        <th>${model.task_type === 'timeseries' ? 'MASE' : 'Test Skoru'}</th>
-                        <th>İç Skor</th>
-                        <th>CPU</th>
-                        <th>Günlük</th>
-                        ${model.task_type !== 'timeseries' ? '<th>Saatlik</th>' : ''}
-                        <th class="text-right">Dışa Aktar</th>
+                        <th>Y\u00f6ntem</th>
+                        <th>${model.task_type === 'timeseries' ? 'MASE' : 'Ba\u015far\u0131'}</th>
+                        <th>Do\u011frulama</th>
+                        <th>Otomatik \u00c7al\u0131\u015ft\u0131rma</th>
+                        <th class="text-right">Kullan</th>
                     </tr></thead>
                     <tbody>
                     ${submodels.map((sm, i) => {
                         const isTS = model.task_type === 'timeseries';
                         const overfit = isTS ? 0 : ((sm.score_internal || 0) - sm.score);
-                        const ofFlag = overfit > 0.05 ? '<span class="tag tag-red text-xs ml-1" title="İç skor test skorundan çok yüksek — aşırı öğrenme olabilir">⚠</span>' : '';
+                        const ofFlag = overfit > 0.05 ? '<span class="tag tag-red text-xs ml-1" title="\u0130\u00e7 skor test skorundan \u00e7ok y\u00fcksek \u2014 a\u015f\u0131r\u0131 \u00f6\u011frenme olabilir">\u26a0</span>' : '';
+                        const autoTag = sm.airflow_support.supported ? '<span class="tag tag-green">Destekleniyor</span>' : '<span class="tag tag-gray">Desteklenmiyor</span>';
                         return `
                         <tr onclick="navigate('/model/${modelId}/predict/${encodeURIComponent(sm.name)}')">
                             <td>
                                 <div class="flex items-center gap-2">
-                                    ${i === 0 ? '<span class="tag tag-green text-xs">En İyi</span>' : ''}
+                                    ${i === 0 ? '<span class="tag tag-green text-xs">En \u0130yi</span>' : ''}
                                     <span class="font-medium text-sm row-name transition-colors">${esc(sm.name)}</span>
                                 </div>
                             </td>
                             <td>
                                 <div class="${scoreColor(sm.score, model.task_type)} font-mono text-sm font-bold">${formatScore(sm.score, model.task_type)}</div>
-                                ${sm.ci_low != null ? '<div class="text-slate-400 font-mono" style="font-size:10px;">%' + (sm.ci_low * 100).toFixed(0) + '–' + (sm.ci_high * 100).toFixed(0) + ' GA</div>' : ''}
+                                ${sm.ci_low != null ? '<div class="text-slate-400 font-mono" style="font-size:10px;">%' + (sm.ci_low * 100).toFixed(0) + '\u2013' + (sm.ci_high * 100).toFixed(0) + ' GA</div>' : ''}
                             </td>
                             <td class="font-mono text-sm text-slate-500">${isTS ? sm.score_internal.toFixed(2) : '%' + ((sm.score_internal || 0) * 100).toFixed(1)}${ofFlag}</td>
-                            <td>${cpuTag(sm.cpu_category)}</td>
-                            <td>${airflowTag(sm.airflow_support)}</td>
-                            ${!isTS ? '<td>' + sqlTag(sm.sql_support) + '</td>' : ''}
+                            <td>${autoTag}</td>
                             <td class="text-right" onclick="event.stopPropagation()">
-                                <button class="btn-export btn-sm" onclick="navigate('/model/${modelId}/export/${encodeURIComponent(sm.name)}')">Dışa Aktar</button>
+                                <button class="btn-export btn-sm" onclick="navigate('/model/${modelId}/export/${encodeURIComponent(sm.name)}')">Kullan</button>
                             </td>
                         </tr>`;
                     }).join('')}
@@ -1788,10 +1790,10 @@
 
         chartInstances['results'] = new Chart(ctx, {
             type: 'bar',
-            data: { labels: sorted.map(s => s.name), datasets: [{ label: isTS ? 'MASE' : 'Test Skoru', data: chartData, backgroundColor: colors, borderRadius: 6, barThickness: 26 }] },
+            data: { labels: sorted.map(s => s.name), datasets: [{ label: isTS ? 'MASE' : 'Ba\u015far\u0131', data: chartData, backgroundColor: colors, borderRadius: 6, barThickness: 26 }] },
             options: {
                 indexAxis: 'y', responsive: true, maintainAspectRatio: false,
-                plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1E293B', titleColor: '#F8FAFC', bodyColor: '#CBD5E1', callbacks: { label: ctx => isTS ? `MASE: ${ctx.raw}` : `Test: ${ctx.raw}%` } } },
+                plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1E293B', titleColor: '#F8FAFC', bodyColor: '#CBD5E1', callbacks: { label: ctx => isTS ? `MASE: ${ctx.raw}` : `Ba\u015far\u0131: ${ctx.raw}%` } } },
                 scales: {
                     x: { min: 0, max: maxVal, grid: { color: '#F1F5F9' }, ticks: { color: '#64748B', callback: v => isTS ? v : '%' + v } },
                     y: { grid: { display: false }, ticks: { color: '#475569', font: { family: 'JetBrains Mono', size: 11 } } }
@@ -1823,8 +1825,8 @@
         app().innerHTML = `
         <div class="fade-in max-w-4xl mx-auto">
             <div class="text-sm text-slate-400 mb-4 flex items-center gap-1.5">
-                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/')">Ana Sayfa</span><span>›</span>
-                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/model/${modelId}/results')">${esc(model.name)}</span><span>›</span>
+                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/')">Ana Sayfa</span><span>\u203a</span>
+                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/model/${modelId}/results')">${esc(model.name)}</span><span>\u203a</span>
                 <span class="text-slate-600">${esc(submodelName)}</span>
             </div>
 
@@ -1832,51 +1834,51 @@
                 <div>
                     <h1 class="text-2xl font-bold tracking-tight text-slate-900">${esc(submodelName)}</h1>
                     <p class="text-slate-500 text-sm mt-0.5">
-                        ${sm ? `${scoreLabel(model.task_type)}: <span class="${scoreColor(sm.score, model.task_type)} font-mono font-bold">${formatScore(sm.score, model.task_type)}</span> · ${esc(sm.cpu_category)} CPU` : ''}
-                        · Hedef: <span class="font-mono text-slate-700">${esc(model.target_column)}</span>
+                        ${sm ? `${scoreLabel(model.task_type)}: <span class="${scoreColor(sm.score, model.task_type)} font-mono font-bold">${formatScore(sm.score, model.task_type)}</span>` : ''}
+                        \u00b7 Hedef: <span class="font-mono text-slate-700">${esc(model.target_column)}</span>
                     </p>
                 </div>
-                <button class="btn-export btn-sm" onclick="navigate('/model/${modelId}/export/${encodeURIComponent(submodelName)}')">Dışa Aktar</button>
+                <button class="btn-export btn-sm" onclick="navigate('/model/${modelId}/export/${encodeURIComponent(submodelName)}')">Kullan</button>
             </div>
 
             <div class="flex gap-1 mb-6 p-1 rounded-xl bg-slate-100">
-                <button id="tab-single" class="flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all text-brand-700 bg-white shadow-sm" onclick="switchPredictTab('single')">${model.task_type === 'timeseries' ? 'Zaman Serisi Tahmini' : 'Tekli Tahmin'}</button>
-                <button id="tab-batch" class="flex-1 py-2.5 rounded-lg text-sm font-medium transition-all text-slate-500" onclick="switchPredictTab('batch')">Toplu Tahmin (CSV)</button>
-                <button id="tab-explain" class="flex-1 py-2.5 rounded-lg text-sm font-medium transition-all text-slate-500" onclick="switchPredictTab('explain')">Açıklanabilirlik</button>
+                <button id="tab-single" class="flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all text-brand-700 bg-white shadow-sm" onclick="switchPredictTab('single')">${model.task_type === 'timeseries' ? 'Gelecek Tahmini' : 'H\u0131zl\u0131 Tahmin'}</button>
+                <button id="tab-batch" class="flex-1 py-2.5 rounded-lg text-sm font-medium transition-all text-slate-500" onclick="switchPredictTab('batch')">Dosyadan Toplu Tahmin</button>
+                <button id="tab-explain" class="flex-1 py-2.5 rounded-lg text-sm font-medium transition-all text-slate-500" onclick="switchPredictTab('explain')">Nas\u0131l Karar Veriyor?</button>
             </div>
 
             <div id="predict-single">
                 ${model.task_type === 'timeseries' ? `
                 <div class="card p-6 mb-6">
-                    <h3 class="font-semibold text-slate-800 mb-2">Geçmiş Veriyi Yükleyin</h3>
-                    <p class="text-slate-500 text-sm mb-4">Zaman serisi tahmini için geçmiş veri penceresi (CSV) yükleyin. Model, ${model.prediction_length || 10} adım ileri tahmin üretecektir.</p>
+                    <h3 class="font-semibold text-slate-800 mb-2">Ge\u00e7mi\u015f Veriyi Y\u00fckleyin</h3>
+                    <p class="text-slate-500 text-sm mb-4">Gelecek tahmini i\u00e7in ge\u00e7mi\u015f veri penceresi (CSV) y\u00fckleyin. ${model.prediction_length || 10} ad\u0131m ileri tahmin \u00fcretilecektir.</p>
                     <div class="p-3 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-700 mb-4">
-                        <strong>Gerekli sütunlar:</strong> ${esc(model.timestamp_column || '(zaman damgası)')}, ${esc(model.target_column)}
+                        <strong>Gerekli s\u00fctunlar:</strong> ${esc(model.timestamp_column || '(zaman s\u00fctunu)')}, ${esc(model.target_column)}
                         ${model.item_id_column && model.item_id_column !== '__item_id' ? ', ' + esc(model.item_id_column) : ''}
                     </div>
                     ${!model.model_loaded ? `
                     <div class="p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-700 mb-4" id="ts-load-banner">
-                        <strong>Model henüz yüklü değil.</strong> Tahmin yapabilmek için modeli bir seferlik yüklemek gerekir, ardından hızlıca kullanılabilir.
-                        <button class="ml-2 px-3 py-1 rounded bg-amber-600 text-white text-xs font-semibold hover:bg-amber-700" onclick="loadModelForTimeseries('${modelId}', '${escAttr(submodelName)}', this)">Modeli Yükle (1-2 dk. sürebilir)</button>
+                        <strong>Analiz hen\u00fcz haz\u0131r de\u011fil.</strong> Tahmin yapabilmek i\u00e7in bir seferlik haz\u0131rlamak gerekir, ard\u0131ndan h\u0131zl\u0131ca kullan\u0131labilir.
+                        <button class="ml-2 px-3 py-1 rounded bg-amber-600 text-white text-xs font-semibold hover:bg-amber-700" onclick="loadModelForTimeseries('${modelId}', '${escAttr(submodelName)}', this)">Haz\u0131rla (ilk seferde 1-2 dk. s\u00fcrer)</button>
                     </div>` : ''}
                     <div class="upload-zone" onclick="document.getElementById('ts-history-file').click()"
                          ondragover="event.preventDefault(); this.classList.add('dragover')"
                          ondragleave="this.classList.remove('dragover')"
                          ondrop="event.preventDefault(); const f=event.dataTransfer.files[0]; if(f) runTimeSeriesPrediction(f, '${modelId}', '${escAttr(submodelName)}')">
                         <svg class="mx-auto mb-3" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                        <p class="text-slate-600 font-medium">Geçmiş veri CSV'sini sürükleyin veya tıklayarak seçin</p>
+                        <p class="text-slate-600 font-medium">Ge\u00e7mi\u015f veri CSV'sini s\u00fcr\u00fckleyin veya t\u0131klayarak se\u00e7in</p>
                     </div>
                     <input type="file" id="ts-history-file" accept=".csv" class="hidden" onchange="runTimeSeriesPrediction(this.files[0], '${modelId}', '${escAttr(submodelName)}')">
                 </div>
                 <div id="single-result" class="hidden">
                     <div class="card p-6" style="background: linear-gradient(135deg, #EFF6FF, #fff); border-color: #93C5FD;">
-                        <h3 class="font-semibold text-info-600 mb-3">Tahmin Sonuçları (${model.prediction_length || 10} adım)</h3>
+                        <h3 class="font-semibold text-info-600 mb-3">Tahmin Sonu\u00e7lar\u0131 (${model.prediction_length || 10} ad\u0131m)</h3>
                         <div id="single-result-content"></div>
                     </div>
                 </div>
                 ` : `
                 <div class="card p-6 mb-6">
-                    <h3 class="font-semibold text-slate-800 mb-4">Özellik Değerlerini Girin</h3>
+                    <h3 class="font-semibold text-slate-800 mb-4">Bilgileri Girin</h3>
                     <div class="grid grid-cols-2 gap-3">
                         ${features.map(f => `
                             <div>
@@ -1887,9 +1889,9 @@
                     </div>
                     <button class="btn-primary w-full mt-5" id="predict-btn"
                         onclick="${model.model_loaded ? `runSinglePrediction('${modelId}', '${escAttr(submodelName)}')` : `loadModelThenEnable('${modelId}', '${escAttr(submodelName)}')`}">
-                        ${model.model_loaded ? 'Tahmini Çalıştır' : 'Modeli Yükle (1-2 dk. sürebilir)'}
+                        ${model.model_loaded ? 'Tahmin Et' : 'Haz\u0131rla (ilk seferde 1-2 dk. s\u00fcrer)'}
                     </button>
-                    ${!model.model_loaded ? '<p class="text-xs text-slate-400 mt-2 text-center">Tahmin yapabilmek için modeli bir seferlik yüklemek gerekir, ardından hızlıca kullanılabilir.</p>' : ''}
+                    ${!model.model_loaded ? '<p class="text-xs text-slate-400 mt-2 text-center">Tahmin yapabilmek i\u00e7in bir seferlik haz\u0131rlamak gerekir, ard\u0131ndan h\u0131zl\u0131ca kullan\u0131labilir.</p>' : ''}
                 </div>
                 <div id="single-result" class="hidden">
                     <div class="card p-6" style="background: linear-gradient(135deg, #ECFDF5, #fff); border-color: #A7F3D0;">
@@ -1902,14 +1904,14 @@
 
             <div id="predict-batch" class="hidden">
                 <div class="card p-6 mb-6">
-                    <h3 class="font-semibold text-slate-800 mb-4">Toplu Tahmin İçin CSV Yükle</h3>
-                    <p class="text-slate-500 text-sm mb-4">Aynı sütunları içeren bir CSV yükleyin (hedef sütun olmadan). Tahminler eklenerek indirilecektir.</p>
+                    <h3 class="font-semibold text-slate-800 mb-4">Dosyadan Toplu Tahmin</h3>
+                    <p class="text-slate-500 text-sm mb-4">Ayn\u0131 s\u00fctunlar\u0131 i\u00e7eren bir CSV y\u00fckleyin (hedef s\u00fctun olmadan). Tahminler eklenerek indirilecektir.</p>
                     <div class="upload-zone" onclick="document.getElementById('batch-file').click()"
                          ondragover="event.preventDefault(); this.classList.add('dragover')"
                          ondragleave="this.classList.remove('dragover')"
                          ondrop="handleBatchDrop(event, '${modelId}', '${escAttr(submodelName)}')">
                         <svg class="mx-auto mb-3" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                        <p class="text-slate-600 font-medium">CSV sürükleyin veya tıklayarak seçin</p>
+                        <p class="text-slate-600 font-medium">CSV s\u00fcr\u00fckleyin veya t\u0131klayarak se\u00e7in</p>
                     </div>
                     <input type="file" id="batch-file" accept=".csv" class="hidden" onchange="runBatchPrediction(this, '${modelId}', '${escAttr(submodelName)}')">
                 </div>
@@ -1919,10 +1921,10 @@
             <div id="predict-explain" class="hidden">
                 <div class="card p-6 mb-6">
                     <div class="flex items-center justify-between mb-4">
-                        <h3 class="font-semibold text-slate-800">Açıklanabilirlik Analizi</h3>
-                        <button class="btn-primary btn-sm" id="run-explain-btn" onclick="loadExplainability('${modelId}', '${escAttr(submodelName)}')">Analizi Başlat</button>
+                        <h3 class="font-semibold text-slate-800">Nas\u0131l Karar Veriyor?</h3>
+                        <button class="btn-primary btn-sm" id="run-explain-btn" onclick="loadExplainability('${modelId}', '${escAttr(submodelName)}')">Analizi Ba\u015flat</button>
                     </div>
-                    <p class="text-slate-500 text-sm">Bu modelin tahminlerini hangi özelliklerin yönlendirdiğini analiz edin.</p>
+                    <p class="text-slate-500 text-sm">Tahminleri hangi bilgilerin y\u00f6nlendirdi\u011fini \u00f6\u011frenin.</p>
                 </div>
                 <div id="explain-result"></div>
             </div>
@@ -1945,7 +1947,7 @@
     async function loadModelForTimeseries(modelId, submodelName, btnEl) {
         const origText = btnEl.textContent;
         btnEl.disabled = true;
-        btnEl.textContent = 'Model yükleniyor…';
+        btnEl.textContent = 'Haz\u0131rlan\u0131yor\u2026';
         btnEl.style.opacity = '0.6';
         try {
             const res = await api(`/api/models/${modelId}/predict/${encodeURIComponent(submodelName)}`, {
@@ -1953,7 +1955,7 @@
                 body: JSON.stringify({ _load_only: true }),
             });
             if (res.error) {
-                alert('Model yüklenemedi: ' + res.error);
+                alert('Haz\u0131rlama ba\u015far\u0131s\u0131z oldu: ' + res.error);
                 btnEl.textContent = origText;
                 btnEl.disabled = false;
                 btnEl.style.opacity = '1';
@@ -1962,10 +1964,10 @@
             const banner = document.getElementById('ts-load-banner');
             if (banner) {
                 banner.className = 'p-3 rounded-lg bg-green-50 border border-green-200 text-xs text-green-700 mb-4';
-                banner.innerHTML = '<strong>Model yüklendi!</strong> Artık CSV yükleyerek hızlıca tahmin yapabilirsiniz.';
+                banner.innerHTML = '<strong>Haz\u0131r!</strong> Art\u0131k CSV y\u00fckleyerek h\u0131zl\u0131ca tahmin yapabilirsiniz.';
             }
         } catch (e) {
-            alert('Model yüklenirken hata oluştu.');
+            alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
             btnEl.textContent = origText;
             btnEl.disabled = false;
             btnEl.style.opacity = '1';
@@ -1977,7 +1979,7 @@
         if (!btn) return;
         const origText = btn.textContent;
         btn.disabled = true;
-        btn.textContent = 'Model yükleniyor…';
+        btn.textContent = 'Haz\u0131rlan\u0131yor\u2026';
         btn.style.opacity = '0.6';
 
         try {
@@ -1986,14 +1988,14 @@
                 body: JSON.stringify({ _load_only: true }),
             });
             if (res.error) {
-                alert('Model yüklenemedi: ' + res.error);
+                alert('Haz\u0131rlama ba\u015far\u0131s\u0131z oldu: ' + res.error);
                 btn.textContent = origText;
                 btn.disabled = false;
                 btn.style.opacity = '1';
                 return;
             }
             // Model is now loaded — switch button to predict mode
-            btn.textContent = 'Tahmini Çalıştır';
+            btn.textContent = 'Tahmin Et';
             btn.disabled = false;
             btn.style.opacity = '1';
             btn.setAttribute('onclick', `runSinglePrediction('${modelId}', '${escAttr(submodelName)}')`);
@@ -2001,7 +2003,7 @@
             const note = btn.nextElementSibling;
             if (note && note.tagName === 'P') note.remove();
         } catch (e) {
-            alert('Model yüklenirken hata oluştu.');
+            alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
             btn.textContent = origText;
             btn.disabled = false;
             btn.style.opacity = '1';
@@ -2018,7 +2020,7 @@
             features[inp.dataset.feature] = val;
         });
         const filledCount = Object.values(features).filter(v => v !== '').length;
-        if (filledCount === 0) { alert('Lütfen en az bir özellik değeri girin.'); return; }
+        if (filledCount === 0) { alert('L\u00fctfen en az bir bilgi girin.'); return; }
 
         try {
             const res = await api(`/api/models/${modelId}/predict/${encodeURIComponent(submodelName)}`, {
@@ -2031,13 +2033,13 @@
 
             const emptyCount = Object.values(features).filter(v => v === '').length;
             const totalCount = Object.keys(features).length;
-            const warningHtml = emptyCount > 0 ? `<div class="text-xs text-warn-600 mb-3 flex items-center gap-1.5"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>${totalCount} özellikten ${emptyCount} tanesi boş bırakıldı — tahmin güvenilirliği düşük olabilir</div>` : '';
+            const warningHtml = emptyCount > 0 ? `<div class="text-xs text-warn-600 mb-3 flex items-center gap-1.5"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>${totalCount} bilgiden ${emptyCount} tanesi bo\u015f b\u0131rak\u0131ld\u0131 \u2014 tahmin g\u00fcvenilirli\u011fi d\u00fc\u015f\u00fck olabilir</div>` : '';
 
             const predVal = res.prediction !== null && res.prediction !== undefined ? res.prediction : 'N/A';
             let html = warningHtml + `<div class="text-3xl font-bold text-slate-800 mb-3">${esc(predVal)}</div>`;
 
             if (res.probabilities) {
-                html += '<div class="space-y-2 mt-4"><div class="text-sm text-slate-500 mb-2">Güven Skorları:</div>';
+                html += '<div class="space-y-2 mt-4"><div class="text-sm text-slate-500 mb-2">G\u00fcven Skorlar\u0131:</div>';
                 Object.entries(res.probabilities).sort((a, b) => b[1] - a[1]).forEach(([cls, prob]) => {
                     const safePct = (prob !== null && isFinite(prob)) ? (prob * 100).toFixed(1) : '0.0';
                     html += `<div class="flex items-center gap-3"><span class="text-sm font-mono w-20 text-slate-600">${esc(cls)}</span><div class="flex-1 h-5 rounded-full overflow-hidden bg-slate-100"><div class="h-full rounded-full" style="width: ${safePct}%; background: linear-gradient(90deg, #10B981, #34D399);"></div></div><span class="text-sm font-mono font-bold w-14 text-right ${parseFloat(safePct) > 50 ? 'text-brand-600' : 'text-slate-500'}">%${safePct}</span></div>`;
@@ -2045,7 +2047,7 @@
                 html += '</div>';
             }
             contentDiv.innerHTML = html;
-        } catch (err) { alert('Tahmin hatası: ' + err.message); }
+        } catch (err) { alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
     }
 
     async function runTimeSeriesPrediction(file, modelId, submodelName) {
@@ -2053,14 +2055,14 @@
         const resultDiv = document.getElementById('single-result');
         const contentDiv = document.getElementById('single-result-content');
         resultDiv.classList.remove('hidden');
-        contentDiv.innerHTML = '<div class="spinner mx-auto my-4"></div><p class="text-slate-500 text-center">Geçmiş veri işleniyor ve tahmin üretiliyor...</p>';
+        contentDiv.innerHTML = '<div class="spinner mx-auto my-4"></div><p class="text-slate-500 text-center">Ge\u00e7mi\u015f veri i\u015fleniyor ve tahmin \u00fcretiliyor...</p>';
 
         try {
             // Read CSV as text, parse to rows, send as JSON history
             const text = await file.text();
             const lines = text.trim().split('\n');
             if (lines.length < 2) {
-                contentDiv.innerHTML = '<p class="text-danger-500">CSV en az 1 başlık ve 1 veri satırı içermelidir.</p>';
+                contentDiv.innerHTML = '<p class="text-danger-500">CSV en az 1 ba\u015fl\u0131k ve 1 veri sat\u0131r\u0131 i\u00e7ermelidir.</p>';
                 return;
             }
             const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
@@ -2090,12 +2092,12 @@
             // Display forecast table
             const forecast = res.forecast || [];
             if (forecast.length === 0) {
-                contentDiv.innerHTML = '<p class="text-slate-500">Tahmin sonucu boş döndü.</p>';
+                contentDiv.innerHTML = '<p class="text-slate-500">Tahmin sonucu bo\u015f d\u00f6nd\u00fc.</p>';
                 return;
             }
 
             const cols = Object.keys(forecast[0]);
-            let html = `<div class="text-sm text-slate-600 mb-3">${forecast.length} adımlık tahmin üretildi</div>`;
+            let html = `<div class="text-sm text-slate-600 mb-3">${forecast.length} ad\u0131ml\u0131k tahmin \u00fcretildi</div>`;
             html += '<div class="overflow-x-auto"><table class="data-table text-xs"><thead><tr>';
             cols.forEach(c => { html += `<th>${esc(c)}</th>`; });
             html += '</tr></thead><tbody>';
@@ -2103,7 +2105,7 @@
                 html += '<tr>';
                 cols.forEach(c => {
                     const v = row[c];
-                    const display = v !== null && v !== undefined ? (typeof v === 'number' ? v.toFixed(4) : esc(v)) : '—';
+                    const display = v !== null && v !== undefined ? (typeof v === 'number' ? v.toFixed(4) : esc(v)) : '\u2014';
                     html += `<td class="font-mono">${display}</td>`;
                 });
                 html += '</tr>';
@@ -2111,7 +2113,7 @@
             html += '</tbody></table></div>';
             contentDiv.innerHTML = html;
         } catch (err) {
-            contentDiv.innerHTML = `<p class="text-danger-500">Tahmin hatası: ${esc(err.message)}</p>`;
+            contentDiv.innerHTML = `<p class="text-danger-500">Bir sorun olu\u015ftu: ${esc(err.message)}</p>`;
         }
     }
 
@@ -2122,7 +2124,7 @@
         const batchResult = document.getElementById('batch-result');
         const batchContent = document.getElementById('batch-result-content');
         batchResult.classList.remove('hidden');
-        batchContent.innerHTML = '<div class="spinner mx-auto my-4"></div><p class="text-slate-500">Toplu tahmin işleniyor...</p>';
+        batchContent.innerHTML = '<div class="spinner mx-auto my-4"></div><p class="text-slate-500">Toplu tahmin yap\u0131l\u0131yor...</p>';
         const formData = new FormData();
         formData.append('file', file);
         try {
@@ -2133,12 +2135,12 @@
             if (res.headers.get('Content-Type')?.includes('text/csv')) {
                 const blob = await res.blob();
                 const url = URL.createObjectURL(blob);
-                batchContent.innerHTML = `<svg class="mx-auto mb-3" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg><h3 class="text-xl font-bold text-brand-700 mb-2">Toplu Tahmin Tamamlandı</h3><p class="text-slate-500 text-sm mb-4">Tahminler CSV dosyanıza eklendi</p><a href="${url}" download="tahminler.csv" class="btn-primary inline-flex items-center gap-2"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Tahminleri İndir</a>`;
+                batchContent.innerHTML = `<svg class="mx-auto mb-3" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg><h3 class="text-xl font-bold text-brand-700 mb-2">Toplu Tahmin Tamamland\u0131</h3><p class="text-slate-500 text-sm mb-4">Tahminler CSV dosyan\u0131za eklendi</p><a href="${url}" download="tahminler.csv" class="btn-primary inline-flex items-center gap-2"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Tahminleri \u0130ndir</a>`;
             } else {
                 const data = await res.json();
-                batchContent.innerHTML = `<p class="text-danger-500">Hata: ${esc(data.error || 'Bilinmeyen hata')}</p>`;
+                batchContent.innerHTML = `<p class="text-danger-500">Bir sorun olu\u015ftu: ${esc(data.error || 'Bilinmeyen hata')}</p>`;
             }
-        } catch (err) { batchContent.innerHTML = `<p class="text-danger-500">Hata: ${esc(err.message)}</p>`; }
+        } catch (err) { batchContent.innerHTML = `<p class="text-danger-500">Bir sorun olu\u015ftu: ${esc(err.message)}</p>`; }
     }
 
     // ══════════════════════════════════════════════════════════
@@ -2150,7 +2152,7 @@
         const btn = document.getElementById('run-explain-btn') || document.getElementById('run-ca-explain-btn');
         if (!container) return;
         if (btn) { btn.disabled = true; btn.textContent = 'Analiz ediliyor...'; }
-        container.innerHTML = `<div class="card p-8 text-center"><div class="spinner mx-auto mb-4"></div><p class="text-slate-500">Analiz hesaplanıyor...</p><p class="text-slate-400 text-xs mt-2">Bu işlem 30-60 saniye sürebilir</p></div>`;
+        container.innerHTML = `<div class="card p-8 text-center"><div class="spinner mx-auto mb-4"></div><p class="text-slate-500">Analiz hesaplan\u0131yor...</p><p class="text-slate-400 text-xs mt-2">Bu i\u015flem 30-60 saniye s\u00fcrebilir</p></div>`;
         try {
             const res = await api(`/api/models/${modelId}/explain/${encodeURIComponent(submodelName)}`);
             if (res.error) { container.innerHTML = `<div class="card p-6"><p class="text-danger-500">${esc(res.error)}</p></div>`; if (btn) { btn.disabled = false; btn.textContent = 'Tekrar Dene'; } return; }
@@ -2177,7 +2179,7 @@
                 return;
             }
             const topN = fi.slice(0, 15);
-            let html = `<div class="card p-6 mb-6"><h3 class="font-semibold text-slate-800 mb-4 flex items-center gap-2">Özellik Önemi <span class="tag tag-green text-xs">${esc(res.method || '')}</span></h3><div class="space-y-2">${topN.map((f, i) => {
+            let html = `<div class="card p-6 mb-6"><h3 class="font-semibold text-slate-800 mb-4 flex items-center gap-2">Hangi Bilgiler Etkili? <span class="tag tag-green text-xs">${esc(res.method || '')}</span></h3><div class="space-y-2">${topN.map((f, i) => {
                 const pct = (f.importance * 100).toFixed(0);
                 return `<div class="flex items-center gap-3"><span class="text-xs text-slate-400 w-5 text-right font-bold">${i+1}</span><span class="text-sm font-mono w-44 truncate text-slate-700" title="${esc(f.feature)}">${esc(f.feature)}</span><div class="flex-1 h-6 rounded overflow-hidden bg-slate-100"><div class="h-full rounded" style="width: ${pct}%; background: linear-gradient(90deg, #10B981, #34D399); min-width: 2px;"></div></div><span class="text-xs font-mono w-12 text-right text-slate-500">%${pct}</span></div>`;
             }).join('')}</div></div>`;
@@ -2185,8 +2187,8 @@
             // ── SHAP analysis (if available) ──
             if (res.shap && res.shap.shap_importance && res.shap.shap_importance.length > 0) {
                 const shapItems = res.shap.shap_importance.slice(0, 15);
-                html += `<div class="card p-6 mb-6"><h3 class="font-semibold text-slate-800 mb-4 flex items-center gap-2">SHAP Değerleri <span class="tag tag-blue text-xs">${esc(res.shap.method || 'SHAP')}</span></h3>
-                    <p class="text-xs text-slate-400 mb-3">SHAP, modelin iç yapısına bakarak her özelliğin tahmini ne kadar etkilediğini ölçer. Permütasyon öneminden farklı olarak, modelin karar mekanizmasını doğrudan analiz eder.</p>
+                html += `<div class="card p-6 mb-6"><h3 class="font-semibold text-slate-800 mb-4 flex items-center gap-2">Derinlemesine Analiz <span class="tag tag-blue text-xs">${esc(res.shap.method || 'SHAP')}</span></h3>
+                    <p class="text-xs text-slate-400 mb-3">Her bilginin sonuca ne kadar etki etti\u011fini g\u00f6sterir.</p>
                     <div class="space-y-2">${shapItems.map((f, i) => {
                         const pct = (f.importance * 100).toFixed(0);
                         return `<div class="flex items-center gap-3"><span class="text-xs text-slate-400 w-5 text-right font-bold">${i+1}</span><span class="text-sm font-mono w-44 truncate text-slate-700" title="${esc(f.feature)}">${esc(f.feature)}</span><div class="flex-1 h-6 rounded overflow-hidden bg-slate-100"><div class="h-full rounded" style="width: ${pct}%; background: linear-gradient(90deg, #3B82F6, #60A5FA); min-width: 2px;"></div></div><span class="text-xs font-mono w-12 text-right text-slate-500">%${pct}</span></div>`;
@@ -2195,7 +2197,7 @@
 
             container.innerHTML = html;
             if (btn) { btn.disabled = false; btn.textContent = 'Tekrar Analiz Et'; }
-        } catch (err) { container.innerHTML = `<div class="card p-6"><p class="text-danger-500">Analiz hatası: ${esc(err.message)}</p></div>`; if (btn) { btn.disabled = false; btn.textContent = 'Tekrar Dene'; } }
+        } catch (err) { container.innerHTML = `<div class="card p-6"><p class="text-danger-500">Bir sorun olu\u015ftu: ${esc(err.message)}</p></div>`; if (btn) { btn.disabled = false; btn.textContent = 'Tekrar Dene'; } }
     }
 
     function renderCallAnalysisExplain(container, res) {
@@ -2209,9 +2211,9 @@
                 const acc = va.accuracy || 0;
                 const accColor = acc >= 80 ? 'text-brand-600' : acc >= 60 ? 'text-warn-500' : 'text-danger-500';
                 varsHtml += `<div class="card p-5 mb-4">
-                    <h4 class="font-semibold text-slate-800 text-sm mb-3">${safeVn} <span class="tag tag-green text-xs">Sınıflandırma</span></h4>
+                    <h4 class="font-semibold text-slate-800 text-sm mb-3">${safeVn} <span class="tag tag-green text-xs">Evet/Hay\u0131r</span></h4>
                     <div class="text-2xl font-bold ${accColor} mb-2">%${acc}</div>
-                    <div class="text-xs text-slate-400 mb-3">${va.correct || 0}/${va.n || 0} doğru tahmin</div>`;
+                    <div class="text-xs text-slate-400 mb-3">${va.correct || 0}/${va.n || 0} do\u011fru tahmin</div>`;
                 if (va.per_class_accuracy) {
                     varsHtml += '<div class="space-y-1.5">';
                     for (const [cls, clsAcc] of Object.entries(va.per_class_accuracy)) {
@@ -2225,9 +2227,9 @@
                 varsHtml += '</div>';
             } else if (va.type === 'regression') {
                 varsHtml += `<div class="card p-5 mb-4">
-                    <h4 class="font-semibold text-slate-800 text-sm mb-3">${safeVn} <span class="tag tag-orange text-xs">Sayısal</span></h4>
-                    <div class="text-xl font-bold text-slate-800 mb-1">MAE: ${va.mae != null ? va.mae : '—'}</div>
-                    <div class="text-xs text-slate-400">RMSE: ${va.rmse != null ? va.rmse : '—'} · n=${va.n || 0}</div>
+                    <h4 class="font-semibold text-slate-800 text-sm mb-3">${safeVn} <span class="tag tag-orange text-xs">Puan</span></h4>
+                    <div class="text-xl font-bold text-slate-800 mb-1">MAE: ${va.mae != null ? va.mae : '\u2014'}</div>
+                    <div class="text-xs text-slate-400">RMSE: ${va.rmse != null ? va.rmse : '\u2014'} \u00b7 n=${va.n || 0}</div>
                 </div>`;
             }
         }
@@ -2235,7 +2237,7 @@
         let samplesHtml = '';
         if (samples.length > 0) {
             samplesHtml = `<div class="card p-5 mb-4">
-                <h4 class="font-semibold text-slate-800 text-sm mb-3">Örnek LLM Gerekçeleri</h4>
+                <h4 class="font-semibold text-slate-800 text-sm mb-3">\u00d6rnek De\u011ferlendirme Gerek\u00e7eleri</h4>
                 <div class="space-y-2">${samples.map(s => {
                     const safeFn = esc(s.filename || '');
                     const safeR = esc(s.reasoning || '');
@@ -2247,11 +2249,11 @@
         let errorHtml = '';
         if (res.error_count > 0) {
             errorHtml = `<div class="p-3 rounded-lg bg-red-50 border border-red-100 mb-4">
-                <p class="text-xs text-red-700"><strong>${res.error_count}</strong> dosyada hata oluştu (%${res.error_rate}). Bu dosyalar analiz sonuçlarına dahil edilmedi.</p>
+                <p class="text-xs text-red-700"><strong>${res.error_count}</strong> dosyada hata olu\u015ftu (%${res.error_rate}). Bu dosyalar analiz sonu\u00e7lar\u0131na dahil edilmedi.</p>
             </div>`;
         }
 
-        const summaryFormatted = esc(res.summary || '').replace(/## ([^\n]+)/g, '<h4 class="font-bold text-slate-700 mt-3 mb-1">$1</h4>').replace(/### ([^\n]+)/g, '<h5 class="font-semibold text-slate-600 mt-2 mb-1">$1</h5>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/  - /g, '<br>&nbsp;&nbsp;• ').replace(/\n/g, '<br>');
+        const summaryFormatted = esc(res.summary || '').replace(/## ([^\n]+)/g, '<h4 class="font-bold text-slate-700 mt-3 mb-1">$1</h4>').replace(/### ([^\n]+)/g, '<h5 class="font-semibold text-slate-600 mt-2 mb-1">$1</h5>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/  - /g, '<br>&nbsp;&nbsp;\u2022 ').replace(/\n/g, '<br>');
 
         container.innerHTML = `<div class="space-y-4">
             ${errorHtml}
@@ -2260,7 +2262,7 @@
             <div class="card p-5">
                 <h4 class="font-semibold text-slate-800 text-sm mb-3 flex items-center gap-2">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                    Özet
+                    \u00d6zet
                 </h4>
                 <div class="text-sm text-slate-600 leading-relaxed">${summaryFormatted}</div>
             </div>
@@ -2284,59 +2286,59 @@
 
         // Stationarity badge
         const statBadge = stationarity.stationary === true
-            ? '<span class="tag tag-green">Kararlı</span>'
+            ? '<span class="tag tag-green">Kararl\u0131</span>'
             : stationarity.stationary === false
-            ? '<span class="tag tag-orange">Değişken</span>'
+            ? '<span class="tag tag-orange">De\u011fi\u015fken</span>'
             : '<span class="tag tag-gray">Bilinmiyor</span>';
 
         // Stationarity subtitle (plain language)
         const statSubtitle = stationarity.stationary === true
-            ? 'Ortalaması sabit, tahmin edilmesi kolay'
+            ? 'Ortalamas\u0131 sabit, tahmin edilmesi kolay'
             : stationarity.stationary === false
-            ? 'Ortalaması değişiyor, dikkatli modelleme gerekir'
+            ? 'Ortalamas\u0131 de\u011fi\u015fiyor, dikkatli modelleme gerekir'
             : '';
 
         // Trend badge
-        const trendBadge = trend.direction === 'yükseliş'
-            ? '<span class="tag tag-green">↑ Yükseliş</span>'
-            : trend.direction === 'düşüş'
-            ? '<span class="tag tag-orange">↓ Düşüş</span>'
-            : '<span class="tag tag-gray">→ Sabit</span>';
+        const trendBadge = trend.direction === 'y\u00fcksel\u0131\u015f'
+            ? '<span class="tag tag-green">\u2191 Y\u00fcksel\u0131\u015f</span>'
+            : trend.direction === 'd\u00fc\u015f\u00fc\u015f'
+            ? '<span class="tag tag-orange">\u2193 D\u00fc\u015f\u00fc\u015f</span>'
+            : '<span class="tag tag-gray">\u2192 Sabit</span>';
 
         // Trend subtitle (plain language)
         const trendR2 = (trend.r_squared || 0);
-        const trendSubtitle = trendR2 > 0.6 ? 'Güçlü yönelim' : trendR2 > 0.3 ? 'Orta düzey yönelim' : 'Zayıf yönelim';
+        const trendSubtitle = trendR2 > 0.6 ? 'G\u00fc\u00e7l\u00fc y\u00f6nelim' : trendR2 > 0.3 ? 'Orta d\u00fczey y\u00f6nelim' : 'Zay\u0131f y\u00f6nelim';
 
         const seasonBadge = acf.detected_seasonal_period
-            ? `<span class="tag tag-blue">Her ${acf.detected_seasonal_period} adımda</span>`
+            ? `<span class="tag tag-blue">Her ${acf.detected_seasonal_period} ad\u0131mda</span>`
             : '<span class="tag tag-gray">Tespit Edilemedi</span>';
 
         const seasonPct = Math.round((res.seasonal_strength || 0) * 100);
         const seasonSubtitle = acf.detected_seasonal_period
-            ? `Tekrar eden kalıp gücü: %${seasonPct}`
-            : 'Düzenli bir tekrar kalıbı bulunamadı';
+            ? `Tekrar eden kal\u0131p g\u00fcc\u00fc: %${seasonPct}`
+            : 'D\u00fczenli bir tekrar kal\u0131b\u0131 bulunamad\u0131';
 
         let html = `
         <div class="space-y-6">
             <!-- Stats Cards -->
             <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div class="stat-card">
-                    <div class="text-slate-500 text-xs font-medium mb-1">Veri Noktası Sayısı</div>
+                    <div class="text-slate-500 text-xs font-medium mb-1">Veri Say\u0131s\u0131</div>
                     <div class="text-2xl font-bold text-slate-800">${stats.count || '?'}</div>
-                    <div class="text-xs text-slate-400 mt-1">${(stats.start || '').substring(0,10)} — ${(stats.end || '').substring(0,10)}</div>
+                    <div class="text-xs text-slate-400 mt-1">${(stats.start || '').substring(0,10)} \u2014 ${(stats.end || '').substring(0,10)}</div>
                 </div>
                 <div class="stat-card">
-                    <div class="text-slate-500 text-xs font-medium mb-1">Genel Yön</div>
+                    <div class="text-slate-500 text-xs font-medium mb-1">Gidi\u015f Y\u00f6n\u00fc</div>
                     <div class="mb-1">${trendBadge}</div>
                     <div class="text-xs text-slate-400">${trendSubtitle}</div>
                 </div>
                 <div class="stat-card">
-                    <div class="text-slate-500 text-xs font-medium mb-1">Tekrar Eden Kalıp</div>
+                    <div class="text-slate-500 text-xs font-medium mb-1">Tekrar Kal\u0131plar\u0131</div>
                     <div class="mb-1">${seasonBadge}</div>
                     <div class="text-xs text-slate-400">${seasonSubtitle}</div>
                 </div>
                 <div class="stat-card">
-                    <div class="text-slate-500 text-xs font-medium mb-1">Tahmin Kolaylığı</div>
+                    <div class="text-slate-500 text-xs font-medium mb-1">Tahmin Edilebilirlik</div>
                     <div class="mb-1">${statBadge}</div>
                     <div class="text-xs text-slate-400">${statSubtitle}</div>
                 </div>
@@ -2344,47 +2346,47 @@
 
             <!-- Strength Gauges -->
             <div class="card p-5">
-                <h3 class="font-semibold text-slate-800 mb-4 text-sm">Bileşen Güçleri</h3>
+                <h3 class="font-semibold text-slate-800 mb-4 text-sm">Veri \u00d6zellikleri</h3>
                 <div class="space-y-3">
-                    ${gauge(res.trend_strength, 'Trend Gücü', 'linear-gradient(90deg, #3B82F6, #60A5FA)')}
-                    ${gauge(res.seasonal_strength, 'Mevsimsel Güç', 'linear-gradient(90deg, #8B5CF6, #A78BFA)')}
-                    ${gauge(stats.cv ? Math.min(1, stats.cv) : 0, 'Değişkenlik (CV)', 'linear-gradient(90deg, #F59E0B, #FBBF24)')}
+                    ${gauge(res.trend_strength, 'Trend G\u00fcc\u00fc', 'linear-gradient(90deg, #3B82F6, #60A5FA)')}
+                    ${gauge(res.seasonal_strength, 'Mevsimsel G\u00fc\u00e7', 'linear-gradient(90deg, #8B5CF6, #A78BFA)')}
+                    ${gauge(stats.cv ? Math.min(1, stats.cv) : 0, 'De\u011fi\u015fkenlik (CV)', 'linear-gradient(90deg, #F59E0B, #FBBF24)')}
                 </div>
                 <div class="mt-3 p-3 rounded-lg bg-blue-50 border border-blue-100">
-                    <p class="text-xs text-blue-700"><strong>Nasıl okunur:</strong> Çubuklar %100'e yakınsa o bileşen verilerinizde baskındır. <strong>Trend Gücü</strong> = uzun vadeli yönün ne kadar belirgin olduğu. <strong>Mevsimsel Güç</strong> = tekrar eden kalıpların ne kadar düzenli olduğu. <strong>Değişkenlik</strong> = verilerin ortalamadan ne kadar uzaklaştığı (yüksek = daha dalgalı).</p>
+                    <p class="text-xs text-blue-700"><strong>Nas\u0131l okunur:</strong> \u00c7ubuklar %100'e yak\u0131nsa o \u00f6zellik verilerinizde bask\u0131nd\u0131r. <strong>Trend G\u00fcc\u00fc</strong> = uzun vadeli y\u00f6n\u00fcn ne kadar belirgin oldu\u011fu. <strong>Mevsimsel G\u00fc\u00e7</strong> = tekrar eden kal\u0131plar\u0131n ne kadar d\u00fczenli oldu\u011fu. <strong>De\u011fi\u015fkenlik</strong> = verilerin ortalamadan ne kadar uzakla\u015ft\u0131\u011f\u0131 (y\u00fcksek = daha dalgal\u0131).</p>
                 </div>
             </div>
 
             <!-- Time Series Chart -->
             <div class="card p-5">
-                <h3 class="font-semibold text-slate-800 mb-2 text-sm">Verilerinizin Zaman İçindeki Seyri</h3>
+                <h3 class="font-semibold text-slate-800 mb-2 text-sm">Verilerinizin Zaman \u0130\u00e7indeki Seyri</h3>
                 <div style="height:280px;"><canvas id="ts-series-chart"></canvas></div>
                 <div class="mt-3 p-3 rounded-lg bg-blue-50 border border-blue-100">
-                    <p class="text-xs text-blue-700"><strong>Nasıl okunur:</strong> <strong>Mavi alan</strong> gerçek değerlerinizi, <strong>kırmızı kesikli çizgi</strong> genel yönelimi (trendi) gösterir. Kırmızı çizgi yukarı gidiyorsa verileriniz artıyor, aşağı gidiyorsa azalıyor. <strong>Turuncu çizgi</strong> (varsa) kısa vadeli dalgalanmaları yumuşatarak orta vadeli gidişatı gösterir.</p>
+                    <p class="text-xs text-blue-700"><strong>Nas\u0131l okunur:</strong> <strong>Mavi alan</strong> ger\u00e7ek de\u011ferlerinizi, <strong>k\u0131rm\u0131z\u0131 kesikli \u00e7izgi</strong> genel y\u00f6nelimi (trendi) g\u00f6sterir. K\u0131rm\u0131z\u0131 \u00e7izgi yukar\u0131 gidiyorsa verileriniz art\u0131yor, a\u015fa\u011f\u0131 gidiyorsa azal\u0131yor. <strong>Turuncu \u00e7izgi</strong> (varsa) k\u0131sa vadeli dalgalanmalar\u0131 yumu\u015fatarak orta vadeli gidi\u015fat\u0131 g\u00f6sterir.</p>
                 </div>
             </div>
 
             <!-- ACF Chart -->
             <div class="card p-5">
-                <h3 class="font-semibold text-slate-800 mb-2 text-sm">Geçmişle Bağlantı Analizi</h3>
-                <p class="text-xs text-slate-400 mb-3">Her çubuk, verilerin geçmişteki belirli bir adım önceki değerlerle ne kadar bağlantılı olduğunu gösterir</p>
+                <h3 class="font-semibold text-slate-800 mb-2 text-sm">Ge\u00e7mi\u015fle Ba\u011flant\u0131 Analizi</h3>
+                <p class="text-xs text-slate-400 mb-3">Her \u00e7ubuk, verilerin ge\u00e7mi\u015fteki belirli bir ad\u0131m \u00f6nceki de\u011ferlerle ne kadar ba\u011flant\u0131l\u0131 oldu\u011funu g\u00f6sterir</p>
                 <div style="height:200px;"><canvas id="ts-acf-chart"></canvas></div>
                 <div class="mt-3 p-3 rounded-lg bg-blue-50 border border-blue-100">
-                    <p class="text-xs text-blue-700"><strong>Nasıl okunur:</strong> Her çubuk bir "gecikme" (lag) — yani kaç adım geriye bakıldığını temsil eder. <strong>Mavi kesikli çizgiyi aşan çubuklar</strong>, o kadar adım önceki değerlerle anlamlı bir bağlantı olduğunu gösterir. Örneğin: 12. çubuk yüksekse, 12 adım önceki verilerle güçlü bir tekrar kalıbı var demektir (aylık veride yıllık döngü gibi).</p>
+                    <p class="text-xs text-blue-700"><strong>Nas\u0131l okunur:</strong> Her \u00e7ubuk bir "gecikme" (lag) \u2014 yani ka\u00e7 ad\u0131m geriye bak\u0131ld\u0131\u011f\u0131n\u0131 temsil eder. <strong>Mavi kesikli \u00e7izgiyi a\u015fan \u00e7ubuklar</strong>, o kadar ad\u0131m \u00f6nceki de\u011ferlerle anlaml\u0131 bir ba\u011flant\u0131 oldu\u011funu g\u00f6sterir. \u00d6rne\u011fin: 12. \u00e7ubuk y\u00fcksekse, 12 ad\u0131m \u00f6nceki verilerle g\u00fc\u00e7l\u00fc bir tekrar kal\u0131b\u0131 var demektir (ayl\u0131k veride y\u0131ll\u0131k d\u00f6ng\u00fc gibi).</p>
                 </div>
             </div>
 
             ${decomp ? `
             <!-- Decomposition Chart -->
             <div class="card p-5">
-                <h3 class="font-semibold text-slate-800 mb-2 text-sm">Verilerinizin Bileşenlere Ayrıştırılması (Periyot: ${decomp.period})</h3>
+                <h3 class="font-semibold text-slate-800 mb-2 text-sm">Verilerinizin Bile\u015fenlere Ayr\u0131\u015ft\u0131r\u0131lmas\u0131 (Periyot: ${decomp.period})</h3>
                 <div class="grid grid-cols-1 gap-4">
                     <div style="height:160px;"><canvas id="ts-decomp-trend"></canvas></div>
                     <div style="height:140px;"><canvas id="ts-decomp-season"></canvas></div>
                     <div style="height:140px;"><canvas id="ts-decomp-resid"></canvas></div>
                 </div>
                 <div class="mt-3 p-3 rounded-lg bg-blue-50 border border-blue-100">
-                    <p class="text-xs text-blue-700"><strong>Nasıl okunur:</strong> Verileriniz üç bileşene ayrıldı: <strong>Trend</strong> (uzun vadeli yön — yükseliyor mu, düşüyor mu?), <strong>Mevsimsel</strong> (her ${decomp.period} adımda bir tekrar eden kalıp — ne kadar düzenliyse tahminler o kadar güvenilir), <strong>Kalıntı</strong> (trend ve mevsimsellik çıkarıldıktan sonra kalan rastgele dalgalanmalar — ne kadar küçükse model verilerinizi o kadar iyi açıklıyor).</p>
+                    <p class="text-xs text-blue-700"><strong>Nas\u0131l okunur:</strong> Verileriniz \u00fc\u00e7 bile\u015fene ayr\u0131ld\u0131: <strong>Trend</strong> (uzun vadeli y\u00f6n \u2014 y\u00fckseliyor mu, d\u00fc\u015f\u00fcyor mu?), <strong>Mevsimsel</strong> (her ${decomp.period} ad\u0131mda bir tekrar eden kal\u0131p \u2014 ne kadar d\u00fczenliyse tahminler o kadar g\u00fcvenilir), <strong>Kal\u0131nt\u0131</strong> (trend ve mevsimsellik \u00e7\u0131kar\u0131ld\u0131ktan sonra kalan rastgele dalgalanmalar \u2014 ne kadar k\u00fc\u00e7\u00fckse sonu\u00e7lar o kadar iyi).</p>
                 </div>
             </div>
             ` : ''}
@@ -2392,7 +2394,7 @@
             <!-- Model Insights -->
             ${models.length ? `
             <div class="card p-5">
-                <h3 class="font-semibold text-slate-800 mb-4 text-sm">Model Performans Karşılaştırması</h3>
+                <h3 class="font-semibold text-slate-800 mb-4 text-sm">Y\u00f6ntem Performans Kar\u015f\u0131la\u015ft\u0131rmas\u0131</h3>
                 <div class="space-y-2">
                     ${models.map((m, i) => {
                         const maxMase = Math.max(...models.map(x => x.mase), 1);
@@ -2402,7 +2404,7 @@
                     }).join('')}
                 </div>
                 <div class="mt-3 p-3 rounded-lg bg-blue-50 border border-blue-100">
-                    <p class="text-xs text-blue-700"><strong>Nasıl okunur:</strong> Skor (MASE) ne kadar <strong>düşükse</strong> model o kadar iyi. <strong>1.0'ın altı</strong> = basit bir "son değeri tekrarla" yönteminden daha başarılı (yeşil = iyi). <strong>1.0 üstü</strong> = basit yöntemlerden daha kötü, iyileştirme gerekebilir (turuncu/kırmızı). En üstteki model en iyi performansı gösterendir.</p>
+                    <p class="text-xs text-blue-700"><strong>Nas\u0131l okunur:</strong> Skor (MASE) ne kadar <strong>d\u00fc\u015f\u00fckse</strong> y\u00f6ntem o kadar iyi. <strong>1.0'\u0131n alt\u0131</strong> = basit bir "son de\u011feri tekrarla" y\u00f6nteminden daha ba\u015far\u0131l\u0131 (ye\u015fil = iyi). <strong>1.0 \u00fcst\u00fc</strong> = basit y\u00f6ntemlerden daha k\u00f6t\u00fc, iyile\u015ftirme gerekebilir (turuncu/k\u0131rm\u0131z\u0131). En \u00fcstteki y\u00f6ntem en iyi performans\u0131 g\u00f6sterendir.</p>
                 </div>
             </div>
             ` : ''}
@@ -2411,7 +2413,7 @@
             <div class="card p-5">
                 <h3 class="font-semibold text-slate-800 mb-3 text-sm flex items-center gap-2">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                    Özet Rapor
+                    \u00d6zet Rapor
                 </h3>
                 <div class="text-sm text-slate-600 leading-relaxed">
                     ${esc(res.summary || '').replace(/## ([^\n]+)/g, '<h4 class="font-bold text-slate-700 mt-3 mb-1">$1</h4>').replace(/### ([^\n]+)/g, '<h5 class="font-semibold text-slate-600 mt-2 mb-1">$1</h5>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>')}
@@ -2483,9 +2485,9 @@
                     options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', labels: { font: { size: 10 }, boxWidth: 16 } } }, scales: { x: { ticks: { maxTicksLimit: 10, font: { size: 9 } }, grid: { display: false } }, y: { grid: { color: '#F1F5F9' }, ticks: { font: { size: 9 } } } } }
                 });
             }
-            decompChart('ts-decomp-trend', decomp.trend, 'Trend Bileşeni', '#3B82F6');
-            decompChart('ts-decomp-season', decomp.seasonal, 'Mevsimsel Bileşen', '#8B5CF6');
-            decompChart('ts-decomp-resid', decomp.residual, 'Kalıntı (Residual)', '#94A3B8');
+            decompChart('ts-decomp-trend', decomp.trend, 'Trend Bile\u015feni', '#3B82F6');
+            decompChart('ts-decomp-season', decomp.seasonal, 'Mevsimsel Bile\u015fen', '#8B5CF6');
+            decompChart('ts-decomp-resid', decomp.residual, 'Kal\u0131nt\u0131 (Residual)', '#94A3B8');
         }
     }
 
@@ -2503,21 +2505,21 @@
         app().innerHTML = `
         <div class="fade-in max-w-4xl mx-auto">
             <div class="text-sm text-slate-400 mb-4 flex items-center gap-1.5">
-                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/')">Ana Sayfa</span><span>›</span>
-                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/model/${modelId}/results')">${esc(model.name)}</span><span>›</span>
-                <span class="text-slate-600">Dışa Aktar: ${esc(submodelName)}</span>
+                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/')">Ana Sayfa</span><span>\u203a</span>
+                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/model/${modelId}/results')">${esc(model.name)}</span><span>\u203a</span>
+                <span class="text-slate-600">Otomatik \u00c7al\u0131\u015ft\u0131rma: ${esc(submodelName)}</span>
             </div>
 
-            <h1 class="text-2xl font-bold tracking-tight text-slate-900 mb-1">Dışa Aktarma Seçenekleri</h1>
-            <p class="text-slate-500 text-sm mb-8">${esc(submodelName)} · ${scoreLabel(model.task_type)}: <span class="${scoreColor(sm.score, model.task_type)} font-mono font-bold">${formatScore(sm.score, model.task_type)}</span></p>
+            <h1 class="text-2xl font-bold tracking-tight text-slate-900 mb-1">Otomatik \u00c7al\u0131\u015ft\u0131rma</h1>
+            <p class="text-slate-500 text-sm mb-8">${esc(submodelName)} \u00b7 ${scoreLabel(model.task_type)}: <span class="${scoreColor(sm.score, model.task_type)} font-mono font-bold">${formatScore(sm.score, model.task_type)}</span></p>
 
             ${model.task_type === 'timeseries' ? `
             <div class="card p-5 mb-6" style="background: linear-gradient(135deg, #EFF6FF, #fff); border-color: #93C5FD;">
                 <div class="flex items-center gap-3">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
                     <div>
-                        <div class="font-semibold text-sm text-blue-800">Zaman Serisi Modeli</div>
-                        <p class="text-xs text-blue-600 mt-0.5">SQL dışa aktarımı zaman serisi modelleri için desteklenmiyor (stateful modeller CASE WHEN ile ifade edilemez). Airflow DAG paketi desteklenir.</p>
+                        <div class="font-semibold text-sm text-blue-800">Gelecek Tahmini Analizi</div>
+                        <p class="text-xs text-blue-600 mt-0.5">SQL otomatik \u00e7al\u0131\u015ft\u0131rma bu analiz t\u00fcr\u00fc i\u00e7in desteklenmiyor. G\u00fcnl\u00fck \u00e7al\u0131\u015ft\u0131rma (Airflow) desteklenir.</p>
                     </div>
                 </div>
             </div>
@@ -2529,34 +2531,34 @@
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
                     <div>
                         <div class="font-semibold text-sm text-purple-800">Metin Embedding Aktif</div>
-                        <p class="text-xs text-purple-600 mt-0.5">Metin sütunları (${model.text_columns.map(c => esc(c)).join(', ')}) otomatik olarak anlamsal embedding'lere dönüştürülmüştür. Model: ${esc(model.embedding_model || 'all-MiniLM-L6-v2')}</p>
+                        <p class="text-xs text-purple-600 mt-0.5">Metin s\u00fctunlar\u0131 (${model.text_columns.map(c => esc(c)).join(', ')}) otomatik olarak anlamsal embedding'lere d\u00f6n\u00fc\u015ft\u00fcr\u00fclm\u00fc\u015ft\u00fcr. Model: ${esc(model.embedding_model || 'all-MiniLM-L6-v2')}</p>
                     </div>
                 </div>
             </div>
             ` : ''}
 
             <div class="card p-6 mb-6">
-                <h3 class="font-semibold text-slate-800 mb-4">Maliyet Tahmini</h3>
+                <h3 class="font-semibold text-slate-800 mb-4">Tahmini Maliyet</h3>
                 <div class="grid grid-cols-2 gap-4 mb-5">
                     <div>
-                        <label class="block text-sm font-medium text-slate-600 mb-1.5">Çalışma başına kaç satır işlenecek?</label>
+                        <label class="block text-sm font-medium text-slate-600 mb-1.5">Tek seferde ka\u00e7 sat\u0131r i\u015flenecek?</label>
                         <input class="input-field" type="number" id="cost-rows" value="1000">
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-slate-600 mb-1.5">Model ne sıklıkta çalışacak?</label>
+                        <label class="block text-sm font-medium text-slate-600 mb-1.5">Ne s\u0131kl\u0131kta \u00e7al\u0131\u015fs\u0131n?</label>
                         <select class="input-field" id="cost-freq">
-                            <option value="monthly">Aylık</option><option value="weekly">Haftalık</option>
-                            <option value="daily" selected>Günlük</option><option value="hourly">Saatlik</option>
+                            <option value="monthly">Ayl\u0131k</option><option value="weekly">Haftal\u0131k</option>
+                            <option value="daily" selected>G\u00fcnl\u00fck</option><option value="hourly">Saatlik</option>
                         </select>
                     </div>
                 </div>
-                ${sm.inference_time_sec != null && sm.inference_time_sec <= 0 ? '<p class="text-xs text-amber-600 mb-2">Tahmin süresi bu model türü için ölçülemedi. Varsayılan değer (0.1 sn) kullanılacaktır.</p>' : ''}
+                ${sm.inference_time_sec != null && sm.inference_time_sec <= 0 ? '<p class="text-xs text-amber-600 mb-2">Tahmin s\u00fcresi bu analiz t\u00fcr\u00fc i\u00e7in \u00f6l\u00e7\u00fclemedi. Varsay\u0131lan de\u011fer (0.1 sn) kullan\u0131lacakt\u0131r.</p>' : ''}
                 <button class="btn-primary" onclick="calculateCost('${modelId}', '${escAttr(submodelName)}', ${sm.inference_time_sec}, ${model.num_columns})">Maliyeti Hesapla</button>
                 <div id="cost-result" class="hidden mt-5"></div>
             </div>
 
             <div class="card p-6">
-                <h3 class="font-semibold text-slate-800 mb-4">Dışa Aktarma Yöntemleri</h3>
+                <h3 class="font-semibold text-slate-800 mb-4">Otomatik \u00c7al\u0131\u015ft\u0131rma Y\u00f6ntemleri</h3>
                 <div class="grid grid-cols-2 gap-4">
                     <div class="p-5 rounded-xl border-2 transition-all ${sm.airflow_support.supported ? 'border-brand-200 hover:border-brand-400 cursor-pointer bg-brand-50/30' : 'border-slate-200 opacity-50'}"
                          ${sm.airflow_support.supported ? `onclick="downloadExport('airflow', '${modelId}', '${escAttr(submodelName)}')"` : ''}>
@@ -2565,11 +2567,11 @@
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${sm.airflow_support.supported ? '#059669' : '#94A3B8'}" stroke-width="2"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg>
                             </div>
                             <div>
-                                <div class="font-semibold text-sm text-slate-800">Günlük Çalışabilir</div>
+                                <div class="font-semibold text-sm text-slate-800">G\u00fcnl\u00fck \u00c7al\u0131\u015fabilir</div>
                                 <div class="text-xs text-slate-500">Airflow DAG Paketi (ZIP)</div>
                             </div>
                         </div>
-                        <p class="text-slate-500 text-xs">DAG dosyası, eğitilmiş model ve kurulum talimatları içeren ZIP paketi. Günlük veya saatlik çalıştırılabilir.</p>
+                        <p class="text-slate-500 text-xs">DAG dosyas\u0131, e\u011fitilmi\u015f model ve kurulum talimatlar\u0131 i\u00e7eren ZIP paketi. G\u00fcnl\u00fck veya saatlik \u00e7al\u0131\u015ft\u0131r\u0131labilir.</p>
                     </div>
 
                     <div class="p-5 rounded-xl border-2 transition-all ${sm.sql_support.easy_sql ? 'border-brand-200 hover:border-brand-400 cursor-pointer bg-brand-50/30' : 'border-slate-200 opacity-50'}"
@@ -2579,11 +2581,11 @@
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${sm.sql_support.easy_sql ? '#059669' : '#94A3B8'}" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
                             </div>
                             <div>
-                                <div class="font-semibold text-sm text-slate-800">Saatlik Çalışabilir</div>
-                                <div class="text-xs ${sm.sql_support.easy_sql ? 'text-brand-600' : 'text-slate-400'}">${sm.sql_support.easy_sql ? 'Saf SQL sorgusu — .sql dosyası' : 'Bu model için desteklenmiyor'}</div>
+                                <div class="font-semibold text-sm text-slate-800">Saatlik \u00c7al\u0131\u015fabilir</div>
+                                <div class="text-xs ${sm.sql_support.easy_sql ? 'text-brand-600' : 'text-slate-400'}">${sm.sql_support.easy_sql ? 'Saf SQL sorgusu \u2014 .sql dosyas\u0131' : 'Bu analiz i\u00e7in desteklenmiyor'}</div>
                             </div>
                         </div>
-                        <p class="text-slate-500 text-xs">${sm.sql_support.easy_sql ? 'CASE WHEN mantığı ile tek .sql dosyası. Ek bağımlılık gerektirmez — her SQL Server üzerinde çalışır.' : 'Bu model türü SQL olarak dışa aktarılamaz. Günlük çalışabilir seçeneğini kullanın.'}</p>
+                        <p class="text-slate-500 text-xs">${sm.sql_support.easy_sql ? 'CASE WHEN mant\u0131\u011f\u0131 ile tek .sql dosyas\u0131. Ek ba\u011f\u0131ml\u0131l\u0131k gerektirmez \u2014 her SQL Server \u00fczerinde \u00e7al\u0131\u015f\u0131r.' : 'Bu analiz t\u00fcr\u00fc SQL olarak \u00e7al\u0131\u015ft\u0131r\u0131lamaz. G\u00fcnl\u00fck \u00e7al\u0131\u015fabilir se\u00e7ene\u011fini kullan\u0131n.'}</p>
                     </div>
                 </div>
             </div>
@@ -2600,8 +2602,8 @@
             const res = await api('/api/cost-estimate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ inference_time_sec: inferenceTime, num_rows: rows, num_columns: numColumns, frequency: freq }) });
             const resultDiv = document.getElementById('cost-result');
             resultDiv.classList.remove('hidden');
-            resultDiv.innerHTML = `<div class="grid grid-cols-2 gap-4"><div class="p-4 rounded-xl bg-brand-50 border border-brand-200"><div class="text-slate-500 text-xs mb-1">Tahmini Aylık Maliyet</div><div class="text-3xl font-bold text-brand-700">$${res.total_monthly.toFixed(2)}</div></div><div class="p-4 rounded-xl bg-slate-50"><div class="text-slate-500 text-xs mb-1">Aylık Çalışma Sayısı</div><div class="text-2xl font-bold text-slate-800">${res.executions_per_month}</div><div class="text-slate-400 text-xs">${res.estimated_job_duration_sec}sn/iş · ${res.time_per_row_ms}ms/satır</div></div></div>`;
-        } catch (err) { alert('Maliyet hesaplama hatası: ' + err.message); }
+            resultDiv.innerHTML = `<div class="grid grid-cols-2 gap-4"><div class="p-4 rounded-xl bg-brand-50 border border-brand-200"><div class="text-slate-500 text-xs mb-1">Tahmini Ayl\u0131k Maliyet</div><div class="text-3xl font-bold text-brand-700">$${res.total_monthly.toFixed(2)}</div></div><div class="p-4 rounded-xl bg-slate-50"><div class="text-slate-500 text-xs mb-1">Ayl\u0131k \u00c7al\u0131\u015fma Say\u0131s\u0131</div><div class="text-2xl font-bold text-slate-800">${res.executions_per_month}</div><div class="text-slate-400 text-xs">${res.estimated_job_duration_sec}sn/i\u015f \u00b7 ${res.time_per_row_ms}ms/sat\u0131r</div></div></div>`;
+        } catch (err) { alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
     }
 
     async function downloadExport(type, modelId, submodelName) {
@@ -2621,9 +2623,9 @@
                 URL.revokeObjectURL(link.href);
             } else {
                 const data = await res.json();
-                alert(data.error || 'Dışa aktarma hatası');
+                alert(data.error || 'Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
             }
-        } catch (err) { alert('Dışa aktarma hatası: ' + err.message); }
+        } catch (err) { alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
     }
 
     async function downloadCallAnalysisCSV(modelId) {
@@ -2641,21 +2643,21 @@
                 URL.revokeObjectURL(link.href);
             } else {
                 const data = await res.json();
-                alert(data.error || 'CSV indirme hatası');
+                alert(data.error || 'Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
             }
-        } catch (err) { alert('CSV indirme hatası: ' + err.message); }
+        } catch (err) { alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
     }
 
     // ══════════════════════════════════════════════════════════
     //  DELETE MODEL
     // ══════════════════════════════════════════════════════════
     async function deleteModel(modelId, modelName, redirectTo) {
-        if (!confirm(`"${modelName}" modelini silmek istediğinize emin misiniz?\n\nBu işlem geri alınamaz. Model, tüm alt modeller ve eğitim verileri kalıcı olarak silinecektir.`)) return;
+        if (!confirm(`"${modelName}" analizini silmek istedi\u011finize emin misiniz?\n\nBu i\u015flem geri al\u0131namaz. Analiz ve t\u00fcm sonu\u00e7lar\u0131 kal\u0131c\u0131 olarak silinecektir.`)) return;
         try {
             const res = await api(`/api/models/${modelId}/delete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-            if (res.error) { alert('Silme hatası: ' + res.error); return; }
+            if (res.error) { alert('Silme s\u0131ras\u0131nda bir sorun olu\u015ftu: ' + res.error); return; }
             navigate(redirectTo || '/');
-        } catch (err) { alert('Silme hatası: ' + err.message); }
+        } catch (err) { alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
     }
 
     // ══════════════════════════════════════════════════════════
@@ -2671,31 +2673,31 @@
         <div class="fade-in">
             <div class="flex items-end justify-between mb-8">
                 <div>
-                    <h1 class="text-3xl font-bold tracking-tight text-slate-900 mb-1">Yönetim Paneli</h1>
-                    <p class="text-slate-500 text-sm">Kullanıcıları yönetin ve yeni hesaplar oluşturun</p>
+                    <h1 class="text-3xl font-bold tracking-tight text-slate-900 mb-1">Y\u00f6netim Paneli</h1>
+                    <p class="text-slate-500 text-sm">Kullan\u0131c\u0131lar\u0131 y\u00f6netin ve yeni hesaplar olu\u015fturun</p>
                 </div>
             </div>
 
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div class="lg:col-span-2">
-                    <div class="section-title">Kullanıcılar</div>
+                    <div class="section-title">Kullan\u0131c\u0131lar</div>
                     <div class="card-flat overflow-hidden">
                         <table class="data-table">
-                            <thead><tr><th>Kullanıcı</th><th>Rol</th><th>Oluşturulma</th><th>Oluşturan</th><th></th></tr></thead>
+                            <thead><tr><th>Kullan\u0131c\u0131</th><th>Rol</th><th>Olu\u015fturulma</th><th>Olu\u015fturan</th><th></th></tr></thead>
                             <tbody>
                             ${data.users.map(u => {
-                                const roleLabel = u.role === 'master_admin' ? 'Ana Yönetici' : u.role === 'admin' ? 'Yönetici' : 'Kullanıcı';
+                                const roleLabel = u.role === 'master_admin' ? 'Ana Y\u00f6netici' : u.role === 'admin' ? 'Y\u00f6netici' : 'Kullan\u0131c\u0131';
                                 const roleTag = u.role === 'master_admin' ? 'tag-purple' : u.role === 'admin' ? 'tag-blue' : 'tag-gray';
                                 const canChangeRole = u.role !== 'master_admin' && u.username !== currentUser.username;
                                 return `<tr>
                                     <td><div class="font-medium text-sm">${esc(u.display_name)}</div><div class="text-slate-400 text-xs">@${esc(u.username)}</div></td>
                                     <td><span class="tag ${roleTag}">${roleLabel}</span></td>
-                                    <td class="text-slate-400 text-xs">${u.created_at ? timeAgo(u.created_at) : '—'}</td>
-                                    <td class="text-slate-400 text-xs">${esc(u.created_by || '—')}</td>
+                                    <td class="text-slate-400 text-xs">${u.created_at ? timeAgo(u.created_at) : '\u2014'}</td>
+                                    <td class="text-slate-400 text-xs">${esc(u.created_by || '\u2014')}</td>
                                     <td class="text-right">
                                         ${canChangeRole ? `<select class="input-field text-xs py-1 px-2" style="width:auto;" onchange="updateUserRole('${escAttr(u.username)}', this.value)">
-                                            <option value="user" ${u.role === 'user' ? 'selected' : ''}>Kullanıcı</option>
-                                            <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Yönetici</option>
+                                            <option value="user" ${u.role === 'user' ? 'selected' : ''}>Kullan\u0131c\u0131</option>
+                                            <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Y\u00f6netici</option>
                                         </select>` : ''}
                                     </td>
                                 </tr>`;
@@ -2706,29 +2708,29 @@
                 </div>
 
                 <div>
-                    <div class="section-title">Yeni Kullanıcı Oluştur</div>
+                    <div class="section-title">Yeni Kullan\u0131c\u0131 Olu\u015ftur</div>
                     <div class="card p-6">
                         <div class="space-y-4">
                             <div>
-                                <label class="block text-sm font-medium text-slate-600 mb-1">Kullanıcı Adı</label>
+                                <label class="block text-sm font-medium text-slate-600 mb-1">Kullan\u0131c\u0131 Ad\u0131</label>
                                 <input class="input-field" id="new-username" placeholder="kullanici_adi">
                             </div>
                             <div>
-                                <label class="block text-sm font-medium text-slate-600 mb-1">Görünen Ad</label>
-                                <input class="input-field" id="new-displayname" placeholder="Ahmet Yılmaz">
+                                <label class="block text-sm font-medium text-slate-600 mb-1">G\u00f6r\u00fcnen Ad</label>
+                                <input class="input-field" id="new-displayname" placeholder="Ahmet Y\u0131lmaz">
                             </div>
                             <div>
-                                <label class="block text-sm font-medium text-slate-600 mb-1">Şifre</label>
+                                <label class="block text-sm font-medium text-slate-600 mb-1">\u015eifre</label>
                                 <input class="input-field" id="new-password" type="password" placeholder="En az 6 karakter">
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-slate-600 mb-1">Rol</label>
                                 <select class="input-field" id="new-role">
-                                    <option value="user">Kullanıcı</option>
-                                    <option value="admin">Yönetici</option>
+                                    <option value="user">Kullan\u0131c\u0131</option>
+                                    <option value="admin">Y\u00f6netici</option>
                                 </select>
                             </div>
-                            <button class="btn-primary w-full" onclick="createUser()">Kullanıcı Oluştur</button>
+                            <button class="btn-primary w-full" onclick="createUser()">Kullan\u0131c\u0131 Olu\u015ftur</button>
                             <div id="create-user-msg" class="hidden text-sm text-center"></div>
                         </div>
                     </div>
@@ -2777,13 +2779,13 @@
     async function renderSettings() {
         app().innerHTML = `
         <div class="fade-in max-w-lg mx-auto">
-            <h1 class="text-3xl font-bold tracking-tight text-slate-900 mb-8">Hesap Ayarları</h1>
+            <h1 class="text-3xl font-bold tracking-tight text-slate-900 mb-8">Hesap Ayarlar\u0131</h1>
             <div class="card p-6">
-                <h3 class="font-semibold text-slate-800 mb-4">Şifre Değiştir</h3>
+                <h3 class="font-semibold text-slate-800 mb-4">\u015eifre De\u011fi\u015ftir</h3>
                 <div class="space-y-4">
-                    <div><label class="block text-sm font-medium text-slate-600 mb-1">Mevcut Şifre</label><input class="input-field" id="old-pass" type="password"></div>
-                    <div><label class="block text-sm font-medium text-slate-600 mb-1">Yeni Şifre</label><input class="input-field" id="new-pass" type="password" placeholder="En az 6 karakter"></div>
-                    <button class="btn-primary w-full" onclick="changePassword()">Şifreyi Güncelle</button>
+                    <div><label class="block text-sm font-medium text-slate-600 mb-1">Mevcut \u015eifre</label><input class="input-field" id="old-pass" type="password"></div>
+                    <div><label class="block text-sm font-medium text-slate-600 mb-1">Yeni \u015eifre</label><input class="input-field" id="new-pass" type="password" placeholder="En az 6 karakter"></div>
+                    <button class="btn-primary w-full" onclick="changePassword()">\u015eifreyi G\u00fcncelle</button>
                     <div id="pwd-msg" class="hidden text-sm text-center"></div>
                 </div>
             </div>
@@ -2804,7 +2806,7 @@
     //  404
     // ══════════════════════════════════════════════════════════
     function renderNotFound() {
-        app().innerHTML = `<div class="fade-in text-center py-20"><div class="text-6xl mb-4">🔍</div><h1 class="text-2xl font-bold text-slate-800 mb-2">Sayfa Bulunamadı</h1><p class="text-slate-500 mb-6">Aradığınız sayfa mevcut değil.</p><button class="btn-primary" onclick="navigate('/')">Ana Sayfaya Dön</button></div>`;
+        app().innerHTML = `<div class="fade-in text-center py-20"><h1 class="text-2xl font-bold text-slate-800 mb-2">Sayfa Bulunamad\u0131</h1><p class="text-slate-500 mb-6">Arad\u0131\u011f\u0131n\u0131z sayfa mevcut de\u011fil.</p><button class="btn-primary" onclick="navigate('/')">Ana Sayfaya D\u00f6n</button></div>`;
     }
     </script>
 </body>
