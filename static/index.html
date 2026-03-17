@@ -331,6 +331,10 @@
                     </div>
                     <button class="btn-primary w-full text-center py-3" onclick="doLogin()" id="login-btn">Giri\u015f Yap</button>
                 </div>
+                <div class="text-center mt-5 pt-4" style="border-top: 1px solid #E2E8F0;">
+                    <p class="text-slate-500 text-sm">Hesab\u0131n\u0131z yok mu?</p>
+                    <button class="btn-secondary w-full mt-2" onclick="renderSelfRegister()">Kay\u0131t Ol</button>
+                </div>
             </div>
         </div>`;
     }
@@ -376,6 +380,106 @@
 
         btn.disabled = false;
         btn.textContent = 'Giri\u015f Yap';
+    }
+
+    function renderSelfRegister() {
+        document.getElementById('main-nav').classList.add('hidden');
+        app().innerHTML = `
+        <div class="login-container" style="margin: -32px -24px; padding: 32px 24px;">
+            <div class="card p-10 w-full max-w-md fade-in" style="box-shadow: 0 8px 32px rgba(0,0,0,0.08);">
+                <div class="text-center mb-6">
+                    <div class="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4" style="background: linear-gradient(135deg, #10B981, #059669);">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                    </div>
+                    <h1 class="text-2xl font-bold text-slate-800 mb-1">Kay\u0131t Ol</h1>
+                    <p class="text-slate-500 text-sm">Bilgilerinizi girin, y\u00f6netici onay\u0131ndan sonra giri\u015f yapabilirsiniz</p>
+                </div>
+                <div id="register-error" class="hidden mb-4 p-3 rounded-lg bg-red-50 text-danger-600 text-sm border border-red-200"></div>
+                <div id="register-success" class="hidden mb-4 p-3 rounded-lg bg-green-50 text-brand-600 text-sm border border-green-200"></div>
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-sm font-medium text-slate-600 mb-1">Ad Soyad</label>
+                        <input class="input-field" id="reg-displayname" placeholder="Ahmet Y\u0131lmaz">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-600 mb-1">E-posta</label>
+                        <input class="input-field" id="reg-email" type="email" placeholder="ahmet@firma.com">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-600 mb-1">Firma</label>
+                        <input class="input-field" id="reg-company" placeholder="ABC \u00c7a\u011fr\u0131 Merkezi">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-600 mb-1">Kullan\u0131c\u0131 Ad\u0131</label>
+                        <input class="input-field" id="reg-username" placeholder="ahmet_yilmaz">
+                        <p class="text-xs text-slate-400 mt-1">Sadece k\u00fc\u00e7\u00fck harf, rakam ve alt \u00e7izgi</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-600 mb-1">\u015eifre</label>
+                        <input class="input-field" id="reg-password" type="password" placeholder="En az 8 karakter, b\u00fcy\u00fck/k\u00fc\u00e7\u00fck harf ve rakam">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-600 mb-1">\u015eifre Tekrar</label>
+                        <input class="input-field" id="reg-password2" type="password" placeholder="\u015eifrenizi tekrar girin">
+                    </div>
+                    <button class="btn-primary w-full text-center py-3" onclick="doSelfRegister()" id="reg-btn">Ba\u015fvuru G\u00f6nder</button>
+                    <button class="btn-secondary w-full text-center" onclick="renderLogin()">Giri\u015fe D\u00f6n</button>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    async function doSelfRegister() {
+        const display_name = document.getElementById('reg-displayname').value.trim();
+        const email = document.getElementById('reg-email').value.trim();
+        const company = document.getElementById('reg-company').value.trim();
+        const username = document.getElementById('reg-username').value.trim();
+        const password = document.getElementById('reg-password').value;
+        const password2 = document.getElementById('reg-password2').value;
+        const errDiv = document.getElementById('register-error');
+        const successDiv = document.getElementById('register-success');
+        const btn = document.getElementById('reg-btn');
+
+        errDiv.classList.add('hidden');
+        successDiv.classList.add('hidden');
+
+        if (!display_name || !email || !username || !password) {
+            errDiv.textContent = 'T\u00fcm alanlar\u0131 doldurun';
+            errDiv.classList.remove('hidden');
+            return;
+        }
+        if (password !== password2) {
+            errDiv.textContent = '\u015eifreler e\u015fle\u015fmiyor';
+            errDiv.classList.remove('hidden');
+            return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = 'G\u00f6nderiliyor...';
+
+        try {
+            const res = await fetch(API + '/api/auth/self-register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password, display_name, email, company }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                successDiv.textContent = data.message || 'Ba\u015fvurunuz al\u0131nd\u0131. Y\u00f6netici onay\u0131 bekleniyor.';
+                successDiv.classList.remove('hidden');
+                btn.textContent = 'Ba\u015fvuru G\u00f6nderildi';
+            } else {
+                errDiv.textContent = data.error || 'Bir sorun olu\u015ftu';
+                errDiv.classList.remove('hidden');
+                btn.disabled = false;
+                btn.textContent = 'Ba\u015fvuru G\u00f6nder';
+            }
+        } catch (err) {
+            errDiv.textContent = 'Sunucuya ba\u011flanamad\u0131';
+            errDiv.classList.remove('hidden');
+            btn.disabled = false;
+            btn.textContent = 'Ba\u015fvuru G\u00f6nder';
+        }
     }
 
     // ══════════════════════════════════════════════════════════
@@ -670,7 +774,7 @@
                         <div class="grid grid-cols-2 gap-4 mb-4">
                             <div>
                                 <label class="block text-sm font-medium text-slate-600 mb-1.5">Analiz Ad\u0131</label>
-                                <input class="input-field" id="model-name" placeholder="\u00d6rn: M\u00fc\u015fteri Tahmin Analizi">
+                                <input class="input-field" id="model-name" maxlength="200" placeholder="\u00d6rn: M\u00fc\u015fteri Tahmin Analizi">
                                 <p class="text-xs text-slate-400 mt-1">Analizinize hat\u0131rlayaca\u011f\u0131n\u0131z bir isim verin</p>
                             </div>
                             <div>
@@ -698,7 +802,7 @@
                                 <label class="block text-sm font-medium text-slate-600 mb-1.5">Kimler G\u00f6rs\u00fcn?</label>
                                 <select class="input-field" id="visibility">
                                     <option value="public">Herkes G\u00f6rebilsin</option>
-                                    <option value="private">Sadece Ben G\u00f6reyim</option>
+                                    <option value="private" selected>Sadece Ben G\u00f6reyim</option>
                                 </select>
                             </div>
                         </div>
@@ -772,7 +876,7 @@
                     <div class="grid grid-cols-2 gap-4 mb-4">
                         <div>
                             <label class="block text-sm font-medium text-slate-600 mb-1.5">Analiz Ad\u0131</label>
-                            <input class="input-field" id="audio-model-name" placeholder="\u00d6rn: M\u00fc\u015fteri Memnuniyet Analizi">
+                            <input class="input-field" id="audio-model-name" maxlength="200" placeholder="\u00d6rn: M\u00fc\u015fteri Memnuniyet Analizi">
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-slate-600 mb-1.5">Ses Dili</label>
@@ -802,7 +906,7 @@
                         <label class="block text-sm font-medium text-slate-600 mb-1.5">Kimler G\u00f6rs\u00fcn?</label>
                         <select class="input-field" id="audio-visibility" style="width: 200px;">
                             <option value="public">Herkes G\u00f6rebilsin</option>
-                            <option value="private">Sadece Ben G\u00f6reyim</option>
+                            <option value="private" selected>Sadece Ben G\u00f6reyim</option>
                         </select>
                     </div>
                 </div>
@@ -984,6 +1088,13 @@
                                 <button class="btn-primary" onclick="navigate('/train')">Tekrar Dene</button>
                             </div>`;
                     }
+                    return;
+                }
+                if (res.position != null && res.position >= 0) {
+                    if (statusEl) statusEl.textContent = `S\u0131ran\u0131z: ${res.position + 1}. s\u0131rada bekliyorsunuz...`;
+                    progress = Math.min(progress + 1, 15);
+                    if (progressEl) progressEl.style.width = progress + '%';
+                    setTimeout(poll, 3000);
                     return;
                 }
                 progress = Math.min(progress + Math.random() * 8, 90);
@@ -1204,6 +1315,12 @@
                     if (barEl) barEl.style.background = '#EF4444';
                     return;
                 }
+                if (res.position != null && res.position >= 0) {
+                    if (statusEl) statusEl.textContent = `S\u0131ran\u0131z: ${res.position + 1}. s\u0131rada bekliyorsunuz...`;
+                    if (barEl) barEl.style.width = '5%';
+                    setTimeout(poll, 3000);
+                    return;
+                }
                 const total = res.total || 1;
                 const processed = res.processed || 0;
                 const pct = Math.max(5, Math.round((processed / total) * 100));
@@ -1337,12 +1454,12 @@
                 </table>
             </div>
 
-            <div class="card-flat p-5 mb-6">
+            ${isOwnerOrAdmin ? `<div class="card-flat p-5 mb-6">
                 <h3 class="font-semibold text-slate-800 mb-4">Konu\u015fma Metinleri</h3>
                 <div class="space-y-2">${transcriptItems}</div>
-            </div>
+            </div>` : ''}
 
-            <div class="card p-5 mb-4">
+            ${isOwnerOrAdmin ? `<div class="card p-5 mb-4">
                 <div class="flex items-center justify-between">
                     <h3 class="font-semibold text-slate-800 text-sm flex items-center gap-2">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
@@ -1351,7 +1468,7 @@
                     <button class="btn-primary btn-sm" id="run-ca-explain-btn" onclick="loadExplainability('${model.id}', 'LLM-as-a-Judge')">Analizi Ba\u015flat</button>
                 </div>
             </div>
-            <div id="ca-explain-result"></div>
+            <div id="ca-explain-result"></div>` : ''}
         </div>`;
     }
 
@@ -1821,6 +1938,7 @@
         if (model.error) return renderNotFound();
         const sm = model.submodels.find(s => s.name === submodelName);
         const features = model.feature_columns || [];
+        const isOwnerOrAdmin = model.owner === currentUser.username || isAdmin();
 
         app().innerHTML = `
         <div class="fade-in max-w-4xl mx-auto">
@@ -1844,7 +1962,7 @@
             <div class="flex gap-1 mb-6 p-1 rounded-xl bg-slate-100">
                 <button id="tab-single" class="flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all text-brand-700 bg-white shadow-sm" onclick="switchPredictTab('single')">${model.task_type === 'timeseries' ? 'Gelecek Tahmini' : 'H\u0131zl\u0131 Tahmin'}</button>
                 <button id="tab-batch" class="flex-1 py-2.5 rounded-lg text-sm font-medium transition-all text-slate-500" onclick="switchPredictTab('batch')">Dosyadan Toplu Tahmin</button>
-                <button id="tab-explain" class="flex-1 py-2.5 rounded-lg text-sm font-medium transition-all text-slate-500" onclick="switchPredictTab('explain')">Nas\u0131l Karar Veriyor?</button>
+                ${isOwnerOrAdmin ? `<button id="tab-explain" class="flex-1 py-2.5 rounded-lg text-sm font-medium transition-all text-slate-500" onclick="switchPredictTab('explain')">Nas\u0131l Karar Veriyor?</button>` : ''}
             </div>
 
             <div id="predict-single">
@@ -1918,7 +2036,7 @@
                 <div id="batch-result" class="hidden"><div class="card p-6 text-center" id="batch-result-content"></div></div>
             </div>
 
-            <div id="predict-explain" class="hidden">
+            ${isOwnerOrAdmin ? `<div id="predict-explain" class="hidden">
                 <div class="card p-6 mb-6">
                     <div class="flex items-center justify-between mb-4">
                         <h3 class="font-semibold text-slate-800">Nas\u0131l Karar Veriyor?</h3>
@@ -1927,14 +2045,15 @@
                     <p class="text-slate-500 text-sm">Tahminleri hangi bilgilerin y\u00f6nlendirdi\u011fini \u00f6\u011frenin.</p>
                 </div>
                 <div id="explain-result"></div>
-            </div>
+            </div>` : ''}
         </div>`;
     }
 
     function switchPredictTab(tab) {
         document.getElementById('predict-single').classList.toggle('hidden', tab !== 'single');
         document.getElementById('predict-batch').classList.toggle('hidden', tab !== 'batch');
-        document.getElementById('predict-explain').classList.toggle('hidden', tab !== 'explain');
+        const explainEl = document.getElementById('predict-explain');
+        if (explainEl) explainEl.classList.toggle('hidden', tab !== 'explain');
         ['single', 'batch', 'explain'].forEach(t => {
             const btn = document.getElementById('tab-' + t);
             if (btn) {
@@ -2668,6 +2787,7 @@
         app().innerHTML = `<div class="flex items-center justify-center py-20"><div class="spinner"></div></div>`;
         const data = await api('/api/users');
         if (data.error) { app().innerHTML = `<div class="card p-8 text-center text-slate-500">${esc(data.error)}</div>`; return; }
+        const pending = await api('/api/admin/pending-users');
 
         app().innerHTML = `
         <div class="fade-in">
@@ -2677,6 +2797,35 @@
                     <p class="text-slate-500 text-sm">Kullan\u0131c\u0131lar\u0131 y\u00f6netin ve yeni hesaplar olu\u015fturun</p>
                 </div>
             </div>
+
+            ${pending.count > 0 ? `
+            <div class="mb-8">
+                <div class="section-title flex items-center gap-2">
+                    Bekleyen Ba\u015fvurular
+                    <span class="tag tag-orange">${pending.count}</span>
+                </div>
+                <div class="card-flat overflow-hidden">
+                    <table class="data-table">
+                        <thead><tr><th>Ad Soyad</th><th>E-posta</th><th>Firma</th><th>Kullan\u0131c\u0131 Ad\u0131</th><th>Tarih</th><th></th></tr></thead>
+                        <tbody>
+                        ${pending.pending.map(u => `
+                            <tr>
+                                <td class="font-medium text-sm">${esc(u.display_name)}</td>
+                                <td class="text-slate-500 text-sm">${esc(u.email)}</td>
+                                <td class="text-slate-500 text-sm">${esc(u.company || '\u2014')}</td>
+                                <td class="text-slate-400 text-xs">@${esc(u.username)}</td>
+                                <td class="text-slate-400 text-xs">${timeAgo(u.created_at)}</td>
+                                <td class="text-right">
+                                    <button class="btn-primary btn-sm mr-1" onclick="approveUser('${escAttr(u.username)}')">Onayla</button>
+                                    <button class="btn-danger-sm" onclick="rejectUser('${escAttr(u.username)}')">Reddet</button>
+                                </td>
+                            </tr>
+                        `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            ` : ''}
 
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div class="lg:col-span-2">
@@ -2721,7 +2870,7 @@
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-slate-600 mb-1">\u015eifre</label>
-                                <input class="input-field" id="new-password" type="password" placeholder="En az 6 karakter">
+                                <input class="input-field" id="new-password" type="password" placeholder="En az 8 karakter, b\u00fcy\u00fck/k\u00fc\u00e7\u00fck harf ve rakam">
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-slate-600 mb-1">Rol</label>
@@ -2773,6 +2922,20 @@
         if (res.error) alert(res.error);
     }
 
+    async function approveUser(username) {
+        if (!confirm(username + ' kullan\u0131c\u0131s\u0131n\u0131 onaylamak istedi\u011finize emin misiniz?')) return;
+        const res = await api('/api/admin/approve-user', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username }) });
+        if (res.success) renderAdmin();
+        else alert(res.error || 'Bir sorun olu\u015ftu');
+    }
+
+    async function rejectUser(username) {
+        if (!confirm(username + ' kullan\u0131c\u0131s\u0131n\u0131n ba\u015fvurusunu reddetmek istedi\u011finize emin misiniz?')) return;
+        const res = await api('/api/admin/reject-user', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username }) });
+        if (res.success) renderAdmin();
+        else alert(res.error || 'Bir sorun olu\u015ftu');
+    }
+
     // ══════════════════════════════════════════════════════════
     //  SETTINGS
     // ══════════════════════════════════════════════════════════
@@ -2784,7 +2947,7 @@
                 <h3 class="font-semibold text-slate-800 mb-4">\u015eifre De\u011fi\u015ftir</h3>
                 <div class="space-y-4">
                     <div><label class="block text-sm font-medium text-slate-600 mb-1">Mevcut \u015eifre</label><input class="input-field" id="old-pass" type="password"></div>
-                    <div><label class="block text-sm font-medium text-slate-600 mb-1">Yeni \u015eifre</label><input class="input-field" id="new-pass" type="password" placeholder="En az 6 karakter"></div>
+                    <div><label class="block text-sm font-medium text-slate-600 mb-1">Yeni \u015eifre</label><input class="input-field" id="new-pass" type="password" placeholder="En az 8 karakter, b\u00fcy\u00fck/k\u00fc\u00e7\u00fck harf ve rakam"></div>
                     <button class="btn-primary w-full" onclick="changePassword()">\u015eifreyi G\u00fcncelle</button>
                     <div id="pwd-msg" class="hidden text-sm text-center"></div>
                 </div>

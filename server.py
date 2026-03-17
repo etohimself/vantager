@@ -460,12 +460,13 @@ except ImportError:
     print("Yüklemek için: pip install sentence-transformers")
 
 # Global sentence-transformer model cache (loaded once, reused across trainings)
-_sentence_model_cache = {}
+_sentence_model_cache = {}  # {model_name: {"model": SentenceTransformer, "last_used": float}}
 _sentence_model_lock = threading.Lock()
 
 # Default embedding model: lightweight, fast, 384 dimensions, good multilingual support
 DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
+EMBEDDING_CACHE_TTL = int(os.environ.get("EMBEDDING_CACHE_TTL", "1800"))  # 30 min default
 
 _sentence_model_loading = set()  # track models currently being loaded
 
@@ -474,21 +475,23 @@ def _get_sentence_model(model_name: str = None):
     model_name = model_name or DEFAULT_EMBEDDING_MODEL
     with _sentence_model_lock:
         if model_name in _sentence_model_cache:
-            return _sentence_model_cache[model_name]
+            _sentence_model_cache[model_name]["last_used"] = time.time()
+            return _sentence_model_cache[model_name]["model"]
         # Prevent double-load: wait if another thread is already loading this model
         while model_name in _sentence_model_loading:
             _sentence_model_lock.release()
             time.sleep(0.5)
             _sentence_model_lock.acquire()
             if model_name in _sentence_model_cache:
-                return _sentence_model_cache[model_name]
+                _sentence_model_cache[model_name]["last_used"] = time.time()
+                return _sentence_model_cache[model_name]["model"]
         _sentence_model_loading.add(model_name)
     # Load outside lock to avoid blocking other threads
     try:
         print(f"[Embedding] Loading sentence-transformer model: {model_name}")
         model = SentenceTransformer(model_name)
         with _sentence_model_lock:
-            _sentence_model_cache[model_name] = model
+            _sentence_model_cache[model_name] = {"model": model, "last_used": time.time()}
             _sentence_model_loading.discard(model_name)
         print(f"[Embedding] Model loaded: {model_name} (dim={model.get_sentence_embedding_dimension()})")
         return model
@@ -496,6 +499,21 @@ def _get_sentence_model(model_name: str = None):
         with _sentence_model_lock:
             _sentence_model_loading.discard(model_name)
         raise
+
+
+def _embedding_cache_evictor():
+    """Background thread to evict idle sentence-transformer models."""
+    while True:
+        time.sleep(60)
+        now = time.time()
+        with _sentence_model_lock:
+            to_evict = [name for name, entry in _sentence_model_cache.items()
+                       if (now - entry.get("last_used", now)) > EMBEDDING_CACHE_TTL]
+            for name in to_evict:
+                del _sentence_model_cache[name]
+                log.info(f"[Embedding] Evicted idle model: {name}")
+
+threading.Thread(target=_embedding_cache_evictor, daemon=True, name="embedding-evictor").start()
 
 
 def _embed_text_columns(df, text_columns, model_name=None, batch_size=256, show_progress=True):
@@ -585,6 +603,13 @@ MAX_AUDIO_FILE_SIZE_BYTES = MAX_AUDIO_FILE_SIZE_MB * 1024 * 1024
 MAX_BATCH_ROWS = int(os.environ.get("MAX_BATCH_ROWS", "100000"))
 MAX_PREDICTION_LENGTH = int(os.environ.get("MAX_PREDICTION_LENGTH", "500"))
 
+# ── Session configuration ────────────────────────────────────────
+SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", str(8 * 3600)))
+SESSION_IDLE_TIMEOUT = int(os.environ.get("SESSION_IDLE_TIMEOUT", str(2 * 3600)))
+
+# ── Per-user model quota ─────────────────────────────────────────
+MAX_MODELS_PER_USER = int(os.environ.get("MAX_MODELS_PER_USER", "50"))
+
 # ══════════════════════════════════════════════════════════════════
 #  THREAD-SAFE FILE I/O
 # ══════════════════════════════════════════════════════════════════
@@ -598,6 +623,16 @@ _file_locks = {
     "activity": threading.RLock(),
     "model_meta": threading.RLock(),
 }
+
+_per_model_locks = {}
+_per_model_locks_guard = threading.Lock()
+
+def _get_model_lock(model_id: str) -> threading.RLock:
+    """Get or create a per-model RLock."""
+    with _per_model_locks_guard:
+        if model_id not in _per_model_locks:
+            _per_model_locks[model_id] = threading.RLock()
+        return _per_model_locks[model_id]
 
 
 def _atomic_write_json(filepath: Path, data, use_safe_json=False):
@@ -880,6 +915,36 @@ user_action_tracker = UserActionTracker()
 
 
 # ══════════════════════════════════════════════════════════════════
+#  MODEL REFERENCE COUNTER — prevent deletion during use
+# ══════════════════════════════════════════════════════════════════
+
+class ModelRefCounter:
+    """Track active references to models to prevent deletion during use."""
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._refs = {}  # model_id -> int
+
+    def acquire(self, model_id: str):
+        with self._lock:
+            self._refs[model_id] = self._refs.get(model_id, 0) + 1
+
+    def release(self, model_id: str):
+        with self._lock:
+            count = self._refs.get(model_id, 0) - 1
+            if count <= 0:
+                self._refs.pop(model_id, None)
+            else:
+                self._refs[model_id] = count
+
+    def is_busy(self, model_id: str) -> bool:
+        with self._lock:
+            return self._refs.get(model_id, 0) > 0
+
+
+model_ref_counter = ModelRefCounter()
+
+
+# ══════════════════════════════════════════════════════════════════
 #  JOB STORE — bounded, TTL-aware job tracking
 # ══════════════════════════════════════════════════════════════════
 
@@ -950,6 +1015,20 @@ class JobStore:
                     excess = len(completed) - self._max_completed
                     for jid, _ in completed[:excess]:
                         del self._jobs[jid]
+
+                # Detect stale running jobs (no update in 12 minutes)
+                HEARTBEAT_TIMEOUT = 720  # 12 minutes
+                stale = [(jid, job) for jid, job in self._jobs.items()
+                         if job.get("status") in ("training", "processing", "queued")
+                         and (now - job.get("_updated_at", now)) > HEARTBEAT_TIMEOUT]
+                for jid, job in stale:
+                    job["status"] = "error"
+                    job["error"] = "İş zaman aşımına uğradı (güncelleme alınamadı)"
+                    log.warning(f"[JobStore] Heartbeat timeout: {jid[:8]}…")
+                    uname = job.get("_username")
+                    atype = job.get("_action_type")
+                    if uname and atype:
+                        user_action_tracker.unregister(uname, atype)
 
 
 # Global job stores (replace the old plain dicts)
@@ -1029,6 +1108,19 @@ def _verify_password(password: str, stored_hash: str, salt: str) -> bool:
     return hmac.compare_digest(computed, stored_hash)
 
 
+def _validate_password(password: str) -> str:
+    """Validate password strength. Returns error message or empty string."""
+    if len(password) < 8:
+        return "Şifre en az 8 karakter olmalı"
+    if not re.search(r'[A-Z]', password):
+        return "Şifre en az 1 büyük harf içermeli"
+    if not re.search(r'[a-z]', password):
+        return "Şifre en az 1 küçük harf içermeli"
+    if not re.search(r'[0-9]', password):
+        return "Şifre en az 1 rakam içermeli"
+    return ""
+
+
 def load_users() -> list:
     """Load users from JSON (thread-safe)."""
     with _file_locks["users"]:
@@ -1067,18 +1159,25 @@ def create_session(username: str) -> str:
     token = secrets.token_urlsafe(48)
     with _file_locks["sessions"]:
         sessions = _safe_read_json(SESSIONS_FILE, default={})
-        # Clean expired sessions (older than 24h) — crash-proof
+        # Clean expired sessions (older than SESSION_TTL_SECONDS) — crash-proof
         now_dt = datetime.now()
         now = now_dt.isoformat()
         clean = {}
         for k, v in sessions.items():
             try:
                 created = datetime.fromisoformat(v.get("created_at", ""))
-                if (now_dt - created).total_seconds() < 86400:
+                if (now_dt - created).total_seconds() < SESSION_TTL_SECONDS:
                     clean[k] = v
             except (ValueError, TypeError, KeyError):
                 pass  # Drop corrupt sessions silently
-        clean[token] = {"username": username, "created_at": now}
+        # Limit sessions per user
+        MAX_SESSIONS_PER_USER = 5
+        user_sessions = [(k, v) for k, v in clean.items() if v.get("username") == username]
+        if len(user_sessions) >= MAX_SESSIONS_PER_USER:
+            user_sessions.sort(key=lambda x: x[1].get("created_at", ""))
+            for old_token, _ in user_sessions[:len(user_sessions) - MAX_SESSIONS_PER_USER + 1]:
+                del clean[old_token]
+        clean[token] = {"username": username, "created_at": now, "last_activity": now}
         _atomic_write_json(SESSIONS_FILE, clean)
     return token
 
@@ -1093,13 +1192,26 @@ def get_session_user(token: str) -> dict:
         session = sessions.get(token)
         if not session:
             return None
-        # Check expiry (24h)
+        # Check absolute expiry (SESSION_TTL_SECONDS)
         try:
+            now_dt = datetime.now()
             created = datetime.fromisoformat(session.get("created_at", ""))
-            if (datetime.now() - created).total_seconds() > 86400:
+            if (now_dt - created).total_seconds() > SESSION_TTL_SECONDS:
                 del sessions[token]
                 _atomic_write_json(SESSIONS_FILE, sessions)
                 return None
+            # Check idle timeout (SESSION_IDLE_TIMEOUT)
+            last_activity_str = session.get("last_activity", session.get("created_at", ""))
+            last_activity = datetime.fromisoformat(last_activity_str)
+            idle_seconds = (now_dt - last_activity).total_seconds()
+            if idle_seconds > SESSION_IDLE_TIMEOUT:
+                del sessions[token]
+                _atomic_write_json(SESSIONS_FILE, sessions)
+                return None
+            # Update last_activity but only if more than 300s have elapsed (reduce disk I/O)
+            if idle_seconds > 300:
+                session["last_activity"] = now_dt.isoformat()
+                _atomic_write_json(SESSIONS_FILE, sessions)
         except (ValueError, TypeError):
             # Corrupt session — remove it
             del sessions[token]
@@ -1117,12 +1229,21 @@ def destroy_session(token: str):
 
 
 def init_master_admin():
-    """Create master admin if no users exist."""
+    """Create master admin if no users exist.
+    Reads ADMIN_USER and ADMIN_PASSWORD from environment.
+    Falls back to admin / Admin123! for local development only."""
     users = load_users()
     if len(users) == 0:
-        pwd_hash, salt = _hash_password("admin123")
+        admin_user = os.environ.get("ADMIN_USER", "admin")
+        admin_pass = os.environ.get("ADMIN_PASSWORD", "")
+        if not admin_pass:
+            admin_pass = "Admin123!"
+            log.warning("ADMIN_PASSWORD ortam değişkeni ayarlanmamış — varsayılan şifre kullanılıyor!")
+            log.warning("Üretim ortamında ADMIN_PASSWORD ayarlamayı unutmayın.")
+        pwd_hash, salt = _hash_password(admin_pass)
+        # SECURITY: display_name and email are immutable — no user-facing endpoint should modify them
         master = {
-            "username": "admin",
+            "username": admin_user,
             "display_name": "Sistem Yöneticisi",
             "password_hash": pwd_hash,
             "salt": salt,
@@ -1132,10 +1253,13 @@ def init_master_admin():
         }
         save_users([master])
         print("═══════════════════════════════════════════════════")
-        print("  Ana yönetici hesabı oluşturuldu:")
-        print("  Kullanıcı: admin")
-        print("  Şifre: admin123")
-        print("  ⚠  Lütfen ilk girişte şifrenizi değiştirin!")
+        print(f"  Ana yönetici hesabı oluşturuldu:")
+        print(f"  Kullanıcı: {admin_user}")
+        if admin_pass == "Admin123!":
+            print("  Şifre: Admin123!")
+            print("  ⚠  ÜRETİMDE ADMIN_PASSWORD ORTAM DEĞİŞKENİ AYARLAYIN!")
+        else:
+            print("  Şifre: (ADMIN_PASSWORD ortam değişkeninden alındı)")
         print("═══════════════════════════════════════════════════")
 
 
@@ -1143,24 +1267,51 @@ def init_master_admin():
 init_master_admin()
 
 
-# ── Login Rate Limiter ──────────────────────────────────────────
+# ── Login Rate Limiter (Tiered) ─────────────────────────────────
 class LoginRateLimiter:
-    """Simple in-memory rate limiter for login attempts per IP/username."""
+    """Tiered in-memory rate limiter for login attempts per IP/username.
 
-    def __init__(self, max_attempts: int = 5, window_seconds: int = 300):
+    Tier 1: 5 attempts in 15 min window  -> block for 15 min
+    Tier 2: 15 attempts in 60 min window -> block for 60 min
+    """
+
+    TIERS = [
+        {"max_attempts": 5,  "window": 900,  "block": 900},   # 15 min
+        {"max_attempts": 15, "window": 3600, "block": 3600},  # 60 min
+    ]
+
+    def __init__(self):
         self._lock = threading.Lock()
         self._attempts = {}  # key -> list of timestamps
-        self._max = max_attempts
-        self._window = window_seconds
+        self._last_prune = time.time()
 
-    def is_blocked(self, key: str) -> bool:
+    def is_blocked(self, key: str) -> tuple:
+        """Returns (blocked: bool, retry_after_seconds: int)."""
         with self._lock:
             now = time.time()
             attempts = self._attempts.get(key, [])
-            # Prune old attempts
-            attempts = [t for t in attempts if now - t < self._window]
+            # Prune entries older than the largest window (60 min)
+            max_window = max(t["window"] for t in self.TIERS)
+            attempts = [t for t in attempts if now - t < max_window]
             self._attempts[key] = attempts
-            return len(attempts) >= self._max
+
+            # Check tiers from strictest (highest) to lowest
+            for tier in reversed(self.TIERS):
+                window_attempts = [t for t in attempts if now - t < tier["window"]]
+                if len(window_attempts) >= tier["max_attempts"]:
+                    oldest_in_window = min(window_attempts)
+                    retry_after = int(tier["block"] - (now - oldest_in_window))
+                    if retry_after > 0:
+                        return True, retry_after
+
+            # Periodic prune of empty keys (every 5 minutes)
+            if now - self._last_prune > 300:
+                self._last_prune = now
+                empty_keys = [k for k, v in self._attempts.items() if not v]
+                for k in empty_keys:
+                    del self._attempts[k]
+
+            return False, 0
 
     def record_attempt(self, key: str):
         with self._lock:
@@ -1168,20 +1319,79 @@ class LoginRateLimiter:
             if key not in self._attempts:
                 self._attempts[key] = []
             self._attempts[key].append(now)
-            # Prune old attempts for this key
-            self._attempts[key] = [t for t in self._attempts[key] if now - t < self._window]
-            # Periodically prune empty keys to prevent unbounded growth
-            if len(self._attempts) > 1000:
-                empty_keys = [k for k, v in self._attempts.items() if not v]
-                for k in empty_keys:
-                    del self._attempts[k]
 
     def reset(self, key: str):
         with self._lock:
             self._attempts.pop(key, None)
 
 
-_login_limiter = LoginRateLimiter(max_attempts=5, window_seconds=300)
+_login_limiter = LoginRateLimiter()
+
+
+class SimpleRateLimiter:
+    """Simple sliding window rate limiter."""
+    def __init__(self, max_attempts=3, window_seconds=3600):
+        self._lock = threading.Lock()
+        self._attempts = {}
+        self._max = max_attempts
+        self._window = window_seconds
+
+    def is_blocked(self, key):
+        with self._lock:
+            now = time.time()
+            attempts = [t for t in self._attempts.get(key, []) if now - t < self._window]
+            self._attempts[key] = attempts
+            return len(attempts) >= self._max
+
+    def record_attempt(self, key):
+        with self._lock:
+            now = time.time()
+            if key not in self._attempts:
+                self._attempts[key] = []
+            self._attempts[key].append(now)
+            self._attempts[key] = [t for t in self._attempts[key] if now - t < self._window]
+            if len(self._attempts) > 1000:
+                empty = [k for k, v in self._attempts.items() if not v]
+                for k in empty:
+                    del self._attempts[k]
+
+_registration_limiter = SimpleRateLimiter(max_attempts=3, window_seconds=3600)
+
+
+class APIRateLimiter:
+    """Per-user rate limiter: normal (60/min) and heavy (10/hour) operations."""
+    def __init__(self, normal_max=60, normal_window=60, heavy_max=10, heavy_window=3600):
+        self._lock = threading.Lock()
+        self._normal = {}  # username -> [timestamps]
+        self._heavy = {}   # username -> [timestamps]
+        self._normal_max = normal_max
+        self._normal_window = normal_window
+        self._heavy_max = heavy_max
+        self._heavy_window = heavy_window
+
+    def check_normal(self, username):
+        with self._lock:
+            now = time.time()
+            attempts = [t for t in self._normal.get(username, []) if now - t < self._normal_window]
+            self._normal[username] = attempts
+            if len(attempts) >= self._normal_max:
+                return False
+            attempts.append(now)
+            self._normal[username] = attempts
+            return True
+
+    def check_heavy(self, username):
+        with self._lock:
+            now = time.time()
+            attempts = [t for t in self._heavy.get(username, []) if now - t < self._heavy_window]
+            self._heavy[username] = attempts
+            if len(attempts) >= self._heavy_max:
+                return False
+            attempts.append(now)
+            self._heavy[username] = attempts
+            return True
+
+_api_rate_limiter = APIRateLimiter()
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1514,6 +1724,62 @@ _audio_eval_pool = ThreadPoolExecutor(max_workers=1)
 _training_pool = ThreadPoolExecutor(max_workers=1)
 
 
+class FairJobQueue:
+    """Fair job queue with position tracking. Round-robin across users."""
+    def __init__(self, pool, job_store):
+        self._lock = threading.Lock()
+        self._queue = []  # [(username, job_id, submit_time, callable, args, kwargs)]
+        self._pool = pool
+        self._job_store = job_store
+        self._running = None  # (username, job_id) or None
+
+    def submit(self, username, job_id, fn, *args, **kwargs):
+        """Enqueue a job. Returns queue position (0 = will run next)."""
+        with self._lock:
+            self._queue.append((username, job_id, time.time(), fn, args, kwargs))
+            pos = len(self._queue) - 1
+            if self._running is None:
+                self._dispatch_next()
+                return 0
+            return pos
+
+    def get_position(self, job_id):
+        """Get current queue position for a job. Returns -1 if not queued (running or not found)."""
+        with self._lock:
+            for i, (_, jid, _, _, _, _) in enumerate(self._queue):
+                if jid == job_id:
+                    return i
+            return -1
+
+    def _dispatch_next(self):
+        """Dispatch the next job from queue to the thread pool. Must hold self._lock."""
+        if not self._queue:
+            self._running = None
+            return
+        # Pick next job (FIFO — round-robin not needed with 1-per-user limit)
+        username, job_id, _, fn, args, kwargs = self._queue.pop(0)
+        self._running = (username, job_id)
+        self._job_store.update_fields(job_id, status="training")
+
+        def _wrapper():
+            try:
+                fn(*args, **kwargs)
+            finally:
+                with self._lock:
+                    self._running = None
+                    self._dispatch_next()
+
+        self._pool.submit(_wrapper)
+
+    def queue_length(self):
+        with self._lock:
+            return len(self._queue)
+
+
+_training_queue = FairJobQueue(_training_pool, training_jobs)
+_audio_eval_queue = FairJobQueue(_audio_eval_pool, audio_eval_jobs)
+
+
 # ══════════════════════════════════════════════════════════════════
 #  MODEL CACHE — lazy-load & auto-evict after 20 min idle
 # ══════════════════════════════════════════════════════════════════
@@ -1799,9 +2065,9 @@ def get_airflow_support(model_name: str) -> dict:
 
 
 def load_model_meta(model_id: str) -> dict:
-    """Load model metadata from JSON file (thread-safe)."""
+    """Load model metadata from JSON file (thread-safe, per-model lock)."""
     meta_path = MODELS_DIR / model_id / "meta.json"
-    with _file_locks["model_meta"]:
+    with _get_model_lock(model_id):
         if not meta_path.exists():
             return None
         try:
@@ -1813,10 +2079,10 @@ def load_model_meta(model_id: str) -> dict:
 
 
 def save_model_meta(model_id: str, meta: dict):
-    """Save model metadata to JSON file (thread-safe, atomic, NaN-safe)."""
+    """Save model metadata to JSON file (thread-safe, atomic, NaN-safe, per-model lock)."""
     meta_path = MODELS_DIR / model_id / "meta.json"
     meta_path.parent.mkdir(parents=True, exist_ok=True)
-    with _file_locks["model_meta"]:
+    with _get_model_lock(model_id):
         _atomic_write_json(meta_path, meta, use_safe_json=True)
 
 
@@ -1824,7 +2090,7 @@ def update_model_meta_fields(model_id: str, **updates) -> dict:
     """Atomically read-modify-write specific fields on model metadata.
     Returns the updated meta or None if model not found.
     Use this instead of load→modify→save to prevent race conditions."""
-    with _file_locks["model_meta"]:
+    with _get_model_lock(model_id):
         meta_path = MODELS_DIR / model_id / "meta.json"
         if not meta_path.exists():
             return None
@@ -1840,7 +2106,7 @@ def update_model_meta_fields(model_id: str, **updates) -> dict:
 
 def increment_model_meta_counter(model_id: str, field: str, amount: int = 1) -> dict:
     """Atomically increment a numeric counter on model metadata."""
-    with _file_locks["model_meta"]:
+    with _get_model_lock(model_id):
         meta_path = MODELS_DIR / model_id / "meta.json"
         if not meta_path.exists():
             return None
@@ -1896,6 +2162,11 @@ def get_all_models() -> list:
 def get_public_models() -> list:
     """Get public models only."""
     return [m for m in get_all_models() if m.get("visibility", "public") == "public"]
+
+
+def count_user_models(username: str) -> int:
+    """Count total models owned by a user."""
+    return sum(1 for m in get_all_models() if m.get("owner") == username)
 
 
 def _wilson_ci(p: float, n: int, z: float = 1.96) -> tuple:
@@ -2693,9 +2964,10 @@ def estimate_cost(inference_time_sec: float, num_rows: int, num_columns: int,
 
 def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
                 task_type: str, preset: str, model_name: str, username: str = "",
-                visibility: str = "public", timestamp_column: str = None,
+                visibility: str = "private", timestamp_column: str = None,
                 item_id_column: str = None, prediction_length: int = 10):
     resource_task_id = f"training_{job_id}"
+    model_ref_counter.acquire(model_id)
     try:
         # Acquire resources
         profile = resource_manager.get_profile("training_tabular")
@@ -3059,6 +3331,7 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
         except OSError:
             pass
     finally:
+        model_ref_counter.release(model_id)
         resource_manager.release(resource_task_id)
         user_action_tracker.unregister(username, "training")
         # Clean up the temp CSV directory
@@ -3196,6 +3469,24 @@ def _transcribe_audio(audio_path: str, language: str) -> str:
     return transcript
 
 
+_LLM_SYSTEM_TEMPLATE = """You are an expert call quality evaluator. You will receive a transcript and evaluation instructions.
+
+CRITICAL RULES:
+1. Respond with ONLY a valid JSON object — no markdown, no explanation, no extra text.
+2. The JSON MUST match this exact schema: {json_template}
+3. For classification fields: output a single concise label string.
+4. For numeric fields: output a single number.
+5. Include 'summary_reasoning' as the last key with a brief explanation of your evaluation."""
+
+_LLM_USER_TEMPLATE = """=== EVALUATION INSTRUCTIONS ===
+{user_prompt}
+
+=== TRANSCRIPT ===
+{transcript}
+
+Respond with ONLY the JSON object matching the schema above."""
+
+
 def _build_llm_prompt(user_prompt: str, transcript: str, schema: list) -> list:
     """Build the chat messages for the LLM call with strict JSON output instructions."""
     schema_desc_parts = []
@@ -3208,24 +3499,8 @@ def _build_llm_prompt(user_prompt: str, transcript: str, schema: list) -> list:
     schema_desc_parts.append('  "summary_reasoning": "<string: brief reasoning for your decisions>"')
     json_template = "{\n" + ",\n".join(schema_desc_parts) + "\n}"
 
-    system_msg = (
-        "You are an expert evaluator. You will be given a transcript of an audio call and an evaluation prompt. "
-        "Analyze the transcript according to the evaluation instructions and output your findings.\n\n"
-        "CRITICAL INSTRUCTIONS:\n"
-        "1. You MUST respond with ONLY a valid JSON object — no markdown, no explanation, no extra text.\n"
-        "2. The JSON object MUST exactly match this schema:\n"
-        f"{json_template}\n"
-        "3. Do NOT add any keys beyond those listed above.\n"
-        "4. For classification fields, output a single concise label string.\n"
-        "5. For numeric fields, output a single number (int or float).\n"
-        "6. Always include 'summary_reasoning' as the last key with a brief explanation."
-    )
-
-    user_msg = (
-        f"=== EVALUATION PROMPT ===\n{user_prompt}\n\n"
-        f"=== TRANSCRIPT ===\n{transcript}\n\n"
-        "Now evaluate the transcript according to the prompt and respond with ONLY the JSON object."
-    )
+    system_msg = _LLM_SYSTEM_TEMPLATE.format(json_template=json_template)
+    user_msg = _LLM_USER_TEMPLATE.format(user_prompt=user_prompt, transcript=transcript)
 
     return [
         {"role": "system", "content": system_msg},
@@ -3371,7 +3646,7 @@ def _compute_evaluation_metrics(results: list, schema: list) -> dict:
 def audio_evaluate_pipeline(job_id: str, model_id: str, model_name: str,
                             audio_files: list, schema: list, prompt: str,
                             language: str, actuals_map: dict,
-                            username: str = "", visibility: str = "public"):
+                            username: str = "", visibility: str = "private"):
     """
     Main pipeline for audio evaluation.
     audio_files: list of dicts {"path": str, "filename": str}
@@ -3379,6 +3654,7 @@ def audio_evaluate_pipeline(job_id: str, model_id: str, model_name: str,
     actuals_map: dict of { filename: { var_name: value } }
     """
     resource_task_id = f"audio_eval_{job_id}"
+    model_ref_counter.acquire(model_id)
     try:
         # Reserve per-job processing overhead only; whisper VRAM is managed
         # independently by _get_whisper_model() / _unload_whisper_model()
@@ -3507,6 +3783,7 @@ def audio_evaluate_pipeline(job_id: str, model_id: str, model_name: str,
         audio_eval_jobs[job_id]["error"] = _sanitize_error(e)
 
     finally:
+        model_ref_counter.release(model_id)
         resource_manager.release(resource_task_id)
         user_action_tracker.unregister(username, "audio_eval")
         # Cleanup temp audio files and directory
@@ -3534,6 +3811,7 @@ def audio_predict_pipeline(job_id: str, model_id: str,
     frozen prompt and schema.  Results are stored on the job dict for CSV download.
     """
     resource_task_id = f"audio_predict_{job_id}"
+    model_ref_counter.acquire(model_id)
     try:
         profile = resource_manager.get_profile("audio_pipeline")
         if not resource_manager.try_acquire(resource_task_id, "audio_predict",
@@ -3615,6 +3893,7 @@ def audio_predict_pipeline(job_id: str, model_id: str,
         audio_predict_jobs[job_id]["error"] = _sanitize_error(e)
 
     finally:
+        model_ref_counter.release(model_id)
         resource_manager.release(resource_task_id)
         user_action_tracker.unregister(username, "audio_predict")
         # Cleanup temp audio files and directory
@@ -3708,7 +3987,16 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         if not user:
             self.send_json({"error": "Oturum açmanız gerekiyor"}, 401)
             return None
+        if not _api_rate_limiter.check_normal(user["username"]):
+            self.send_json({"error": "Çok fazla istek gönderdiniz. Lütfen biraz bekleyin."}, 429)
+            return None
         return user
+
+    def _get_client_ip(self):
+        forwarded = self.headers.get("X-Forwarded-For", "")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        return self.client_address[0]
 
     def _require_admin(self) -> dict:
         """Require admin role."""
@@ -3866,6 +4154,12 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             model_id = re.match(r"^/api/models/([a-f0-9-]+)/call-analysis/download-csv$", path).group(1)
             return self.handle_call_analysis_download(model_id)
 
+        elif path == "/api/admin/pending-users":
+            return self.handle_pending_users()
+
+        elif path == "/api/queue/status":
+            return self.handle_queue_status()
+
         elif path.startswith("/api/"):
             return self.send_json({"error": "Bulunamadı"}, 404)
 
@@ -3905,6 +4199,9 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
 
         if path == "/api/auth/logout":
             return self.handle_logout()
+
+        if path == "/api/auth/self-register":
+            return self.handle_self_register(body)
 
         # ── Protected routes ──
         if path == "/api/auth/register":
@@ -3952,6 +4249,12 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         elif path == "/api/users/update-role":
             return self.handle_update_role(body)
 
+        elif path == "/api/admin/approve-user":
+            return self.handle_approve_user(body)
+
+        elif path == "/api/admin/reject-user":
+            return self.handle_reject_user(body)
+
         return self.send_json({"error": "Bulunamadı"}, 404)
 
     # ── Auth Handlers ───────────────────────────────────────
@@ -3968,17 +4271,22 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         if not username or not password:
             return self.send_json({"error": "Kullanıcı adı ve şifre gerekli"}, 400)
 
-        # Rate limiting: block after 5 failed attempts per username in 5 minutes
+        # Rate limiting: tiered blocking after repeated failed attempts
         rate_key = username.lower()
-        if _login_limiter.is_blocked(rate_key):
-            return self.send_json({
-                "error": "Çok fazla başarısız giriş denemesi. 5 dakika sonra tekrar deneyin."
-            }, 429)
+        blocked, retry_after = _login_limiter.is_blocked(rate_key)
+        if blocked:
+            minutes = math.ceil(retry_after / 60)
+            return self.send_json({"error": f"Çok fazla başarısız giriş denemesi. {minutes} dakika sonra tekrar deneyin."}, 429)
 
         user = find_user(username)
         if not user:
             _login_limiter.record_attempt(rate_key)
             return self.send_json({"error": "Kullanıcı adı veya şifre hatalı"}, 401)
+
+        if user.get("status") == "pending":
+            return self.send_json({"error": "Hesabınız henüz onaylanmadı. Lütfen yöneticinizle iletişime geçin."}, 403)
+        if user.get("status") == "rejected":
+            return self.send_json({"error": "Kayıt talebiniz reddedildi."}, 403)
 
         if not _verify_password(password, user["password_hash"], user["salt"]):
             _login_limiter.record_attempt(rate_key)
@@ -4058,8 +4366,9 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         if not re.match(r'^[a-z0-9_]+$', username):
             return self.send_json({"error": "Kullanıcı adı sadece küçük harf, rakam ve alt çizgi içerebilir"}, 400)
 
-        if len(password) < 6:
-            return self.send_json({"error": "Şifre en az 6 karakter olmalı"}, 400)
+        pwd_error = _validate_password(password)
+        if pwd_error:
+            return self.send_json({"error": pwd_error}, 400)
 
         if role not in ("user", "admin"):
             return self.send_json({"error": "Geçersiz rol"}, 400)
@@ -4071,6 +4380,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
 
             pwd_hash, salt = _hash_password(password)
             users = load_users()
+            # SECURITY: display_name and email are immutable — no user-facing endpoint should modify them
             users.append({
                 "username": username,
                 "display_name": display_name,
@@ -4084,6 +4394,69 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
 
         add_activity("user_created", details=f"Yeni kullanıcı: {display_name} ({role})", username=admin["username"])
         self.send_json({"success": True, "message": f"'{display_name}' kullanıcısı oluşturuldu"})
+
+    def handle_self_register(self, body):
+        """Public self-registration with admin approval."""
+        # Rate limit by IP
+        ip = self._get_client_ip()
+        if _registration_limiter.is_blocked(ip):
+            return self.send_json({"error": "Çok fazla kayıt denemesi. Lütfen daha sonra tekrar deneyin."}, 429)
+        _registration_limiter.record_attempt(ip)
+
+        try:
+            data = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
+            return self.send_json({"error": "Geçersiz istek"}, 400)
+
+        username = data.get("username", "").strip().lower()
+        password = data.get("password", "")
+        display_name = data.get("display_name", "").strip()
+        email = data.get("email", "").strip().lower()
+        company = data.get("company", "").strip()
+
+        if not username or not password or not display_name or not email:
+            return self.send_json({"error": "Tüm alanları doldurun (kullanıcı adı, ad soyad, e-posta, şifre)"}, 400)
+        if len(username) < 3:
+            return self.send_json({"error": "Kullanıcı adı en az 3 karakter olmalı"}, 400)
+        if not re.match(r'^[a-z0-9_]+$', username):
+            return self.send_json({"error": "Kullanıcı adı sadece küçük harf, rakam ve alt çizgi içerebilir"}, 400)
+        if not re.match(r'^[^@]+@[^@]+\.[^@]+$', email):
+            return self.send_json({"error": "Geçerli bir e-posta adresi girin"}, 400)
+        if len(display_name) > 100:
+            return self.send_json({"error": "Ad soyad en fazla 100 karakter olabilir"}, 400)
+        if len(company) > 100:
+            return self.send_json({"error": "Firma adı en fazla 100 karakter olabilir"}, 400)
+
+        pwd_error = _validate_password(password)
+        if pwd_error:
+            return self.send_json({"error": pwd_error}, 400)
+
+        with _file_locks["users"]:
+            if find_user(username):
+                return self.send_json({"error": "Bu kullanıcı adı zaten kullanılıyor"}, 400)
+            # Check email uniqueness
+            users = load_users()
+            if any(u.get("email", "").lower() == email for u in users):
+                return self.send_json({"error": "Bu e-posta adresi zaten kayıtlı"}, 400)
+
+            pwd_hash, salt = _hash_password(password)
+            # SECURITY: display_name and email are immutable — no user-facing endpoint should modify them
+            users.append({
+                "username": username,
+                "display_name": display_name,
+                "email": email,
+                "company": company,
+                "password_hash": pwd_hash,
+                "salt": salt,
+                "role": "user",
+                "status": "pending",
+                "created_at": datetime.now().isoformat(),
+                "created_by": "self",
+            })
+            save_users(users)
+
+        add_activity("registration_request", details=f"Yeni kayıt başvurusu: {display_name} ({email})", username=username)
+        self.send_json({"success": True, "message": "Başvurunuz alındı. Yönetici onayından sonra giriş yapabilirsiniz."})
 
     def handle_change_password(self, body):
         user = self._require_auth()
@@ -4100,9 +4473,11 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         if not _verify_password(old_password, user["password_hash"], user["salt"]):
             return self.send_json({"error": "Mevcut şifre hatalı"}, 400)
 
-        if len(new_password) < 6:
-            return self.send_json({"error": "Yeni şifre en az 6 karakter olmalı"}, 400)
+        pwd_error = _validate_password(new_password)
+        if pwd_error:
+            return self.send_json({"error": pwd_error}, 400)
 
+        # Only modify password fields — display_name, email are immutable
         new_hash, new_salt = _hash_password(new_password)
         with _file_locks["users"]:
             users = load_users()
@@ -4123,6 +4498,9 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             "username": u["username"],
             "display_name": u.get("display_name", u["username"]),
             "role": u["role"],
+            "status": u.get("status", "active"),
+            "email": u.get("email", ""),
+            "company": u.get("company", ""),
             "created_at": u.get("created_at", ""),
             "created_by": u.get("created_by", ""),
         } for u in users]
@@ -4168,6 +4546,68 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                      details=f"{target_user.get('display_name', target_username)} → {role_label}",
                      username=admin["username"])
         self.send_json({"success": True, "message": f"Rol güncellendi: {role_label}"})
+
+    def handle_approve_user(self, body):
+        admin = self._require_admin()
+        if not admin: return
+        try:
+            data = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
+            return self.send_json({"error": "Geçersiz istek"}, 400)
+        username = data.get("username", "").strip()
+        if not username:
+            return self.send_json({"error": "Kullanıcı adı gerekli"}, 400)
+        with _file_locks["users"]:
+            users = load_users()
+            found = False
+            for u in users:
+                if u["username"] == username and u.get("status") == "pending":
+                    u["status"] = "active"
+                    found = True
+                    break
+            if not found:
+                return self.send_json({"error": "Bekleyen kullanıcı bulunamadı"}, 404)
+            save_users(users)
+        add_activity("user_approved", details=f"Kullanıcı onaylandı: {username}", username=admin["username"])
+        self.send_json({"success": True, "message": f"'{username}' kullanıcısı onaylandı"})
+
+    def handle_reject_user(self, body):
+        admin = self._require_admin()
+        if not admin: return
+        try:
+            data = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
+            return self.send_json({"error": "Geçersiz istek"}, 400)
+        username = data.get("username", "").strip()
+        if not username:
+            return self.send_json({"error": "Kullanıcı adı gerekli"}, 400)
+        with _file_locks["users"]:
+            users = load_users()
+            original_len = len(users)
+            users = [u for u in users if not (u["username"] == username and u.get("status") == "pending")]
+            if len(users) == original_len:
+                return self.send_json({"error": "Bekleyen kullanıcı bulunamadı"}, 404)
+            save_users(users)
+        add_activity("user_rejected", details=f"Kayıt talebi reddedildi: {username}", username=admin["username"])
+        self.send_json({"success": True, "message": f"'{username}' kullanıcısının başvurusu reddedildi"})
+
+    def handle_pending_users(self):
+        admin = self._require_admin()
+        if not admin: return
+        users = load_users()
+        pending = [{"username": u["username"], "display_name": u.get("display_name", ""),
+                    "email": u.get("email", ""), "company": u.get("company", ""),
+                    "created_at": u.get("created_at", "")}
+                   for u in users if u.get("status") == "pending"]
+        self.send_json({"pending": pending, "count": len(pending)})
+
+    def handle_queue_status(self):
+        user = self._require_auth()
+        if not user: return
+        self.send_json({
+            "training_queue": _training_queue.queue_length(),
+            "audio_eval_queue": _audio_eval_queue.queue_length(),
+        })
 
     # ── API Handlers ───────────────────────────────────────────
 
@@ -4296,6 +4736,13 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         # Include cache status so the frontend can show load/predict button
         meta["model_loaded"] = model_cache.is_loaded(model_id)
 
+        # Strip transcripts for non-owner/non-admin
+        if meta.get("task_type") == "call_analysis" and meta.get("owner") != user["username"] and user["role"] not in ("admin", "master_admin"):
+            ca = meta.get("call_analysis", {})
+            if ca.get("row_results"):
+                for row in ca["row_results"]:
+                    row.pop("transcript", None)
+
         self.send_json(meta)
 
     def handle_get_columns(self, model_id):
@@ -4363,6 +4810,16 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
 
                 _, cleaning_report = clean_dataframe(df_sample.copy(), context="preview")
 
+                # Count total rows for limit check
+                try:
+                    with open(str(csv_path), 'r', encoding='utf-8', errors='replace') as f:
+                        total_rows = sum(1 for _ in f) - 1  # subtract header
+                except Exception:
+                    total_rows = 0
+                if total_rows > MAX_BATCH_ROWS:
+                    shutil.rmtree(str(temp_dir), ignore_errors=True)
+                    return self.send_json({"error": f"CSV dosyası çok büyük ({total_rows:,} satır). Maksimum: {MAX_BATCH_ROWS:,} satır."}, 413)
+
                 return self.send_json({
                     "temp_id": temp_id, "filename": filename,
                     "columns": columns, "dtypes": dtypes,
@@ -4385,8 +4842,15 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         if not user:
             return
 
+        if not _api_rate_limiter.check_heavy(user["username"]):
+            return self.send_json({"error": "Saatlik işlem limitinize ulaştınız. Lütfen daha sonra tekrar deneyin."}, 429)
+
         if not AUTOGLUON_AVAILABLE:
             return self.send_json({"error": "AutoGluon yüklü değil"}, 500)
+
+        # Per-user model quota check
+        if count_user_models(user["username"]) >= MAX_MODELS_PER_USER:
+            return self.send_json({"error": f"Analiz limitinize ulaştınız (maksimum {MAX_MODELS_PER_USER}). Eski analizleri silerek yer açabilirsiniz."}, 429)
 
         try:
             data = json.loads(body)
@@ -4398,7 +4862,9 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         task_type = data.get("task_type", "classification")
         preset = data.get("preset", "medium_quality")
         model_name = data.get("model_name", f"Model_{datetime.now().strftime('%Y%m%d_%H%M')}")
-        visibility = data.get("visibility", "public")
+        if len(model_name) > 200:
+            return self.send_json({"error": "Analiz adı en fazla 200 karakter olabilir"}, 400)
+        visibility = data.get("visibility", "private")
 
         # Time series specific parameters
         timestamp_column = data.get("timestamp_column", None)
@@ -4421,7 +4887,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                 return self.send_json({"error": "Zaman serisi için timestamp_column gerekli"}, 400)
 
         if visibility not in ("public", "private"):
-            visibility = "public"
+            visibility = "private"
 
         if not temp_id or not target_col:
             return self.send_json({"error": "temp_id veya target_column eksik"}, 400)
@@ -4448,10 +4914,11 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             shutil.rmtree(model_dir, ignore_errors=True)
             return self.send_json({"error": reason}, 429)
 
-        training_jobs[job_id] = {"status": "queued", "model_id": model_id}
+        training_jobs[job_id] = {"status": "queued", "model_id": model_id, "_username": user["username"], "_action_type": "training"}
 
         try:
-            _training_pool.submit(
+            _training_queue.submit(
+                user["username"], job_id,
                 train_model,
                 job_id, model_id, csv_path, target_col, task_type, preset, model_name,
                 user["username"], visibility,
@@ -4479,6 +4946,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         if not job:
             return self.send_json({"error": "İş bulunamadı"}, 404)
         response = {"status": job["status"], "model_id": job.get("model_id")}
+        if job["status"] == "queued":
+            response["position"] = _training_queue.get_position(job_id)
         if job["status"] == "done":
             meta = load_model_meta(job["model_id"])
             if meta:
@@ -4517,6 +4986,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                 traceback.print_exc()
                 return self.send_json({"error": f"Model yüklenirken hata: {self._safe_error_message(e)}"}, 500)
 
+        model_ref_counter.acquire(model_id)
         try:
             # ── Time Series prediction path ──
             if meta.get("task_type") == "timeseries":
@@ -4635,11 +5105,16 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             traceback.print_exc()
             self.send_json({"error": self._safe_error_message(e)}, 500)
+        finally:
+            model_ref_counter.release(model_id)
 
     def handle_predict_batch(self, model_id, submodel_name, body):
         user = self._require_auth()
         if not user:
             return
+
+        if not _api_rate_limiter.check_heavy(user["username"]):
+            return self.send_json({"error": "Saatlik işlem limitinize ulaştınız. Lütfen daha sonra tekrar deneyin."}, 429)
 
         if not AUTOGLUON_AVAILABLE:
             return self.send_json({"error": "AutoGluon yüklü değil"}, 500)
@@ -4652,6 +5127,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
 
         content_type = self.headers.get("Content-Type", "")
 
+        model_ref_counter.acquire(model_id)
         try:
             if "multipart/form-data" in content_type:
                 boundary = self._extract_boundary(content_type)
@@ -4787,6 +5263,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             traceback.print_exc()
             self.send_json({"error": self._safe_error_message(e)}, 500)
+        finally:
+            model_ref_counter.release(model_id)
 
     def handle_export_airflow(self, model_id, submodel_name):
         user = self._require_auth()
@@ -5057,6 +5535,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         update_model_meta_fields(model_id, visibility=visibility)
 
         label = "Herkese Açık" if visibility == "public" else "Özel"
+        add_activity("visibility_changed", model_id, meta.get("name", ""),
+                     f"Görünürlük değiştirildi: {label}", username=user["username"])
         self.send_json({"success": True, "message": f"Görünürlük güncellendi: {label}"})
 
     def handle_endorse(self, model_id, body):
@@ -5080,6 +5560,9 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         if endorse:
             add_activity("endorsed", model_id, meta["name"],
                         f"Model yönetici tarafından onaylandı", username=admin["username"])
+        else:
+            add_activity("unendorsed", model_id, meta["name"],
+                        f"Model onayı kaldırıldı", username=admin["username"])
 
         label = "Onaylandı" if endorse else "Onay kaldırıldı"
         self.send_json({"success": True, "message": label})
@@ -5116,6 +5599,9 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         if meta.get("owner") != user["username"] and user["role"] not in ("admin", "master_admin"):
             return self.send_json({"error": "Bu modeli silme yetkiniz yok"}, 403)
 
+        if model_ref_counter.is_busy(model_id):
+            return self.send_json({"error": "Bu analiz şu anda kullanılıyor. Aktif işlerin bitmesini bekleyin."}, 409)
+
         model_name = meta.get("name", "Bilinmeyen")
         model_dir = MODELS_DIR / model_id
 
@@ -5144,6 +5630,9 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         if not self._check_model_access(meta, user):
             return
 
+        if meta.get("owner") != user["username"] and user["role"] not in ("admin", "master_admin"):
+            return self.send_json({"error": "Bu analiz yalnızca sahibi veya yöneticiler tarafından incelenebilir"}, 403)
+
         sm = None
         for s in meta.get("submodels", []):
             if s["name"] == submodel_name:
@@ -5165,6 +5654,7 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             }, 500)
 
         # Time series explainability analysis
+        model_ref_counter.acquire(model_id)
         if meta.get("task_type") == "timeseries":
             try:
                 csv_path = MODELS_DIR / model_id / "training_data.csv"
@@ -5460,10 +5950,12 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                 add_activity("explained", model_id, meta["name"],
                             f"{submodel_name} için zaman serisi açıklanabilirlik analizi",
                             username=user["username"])
+                model_ref_counter.release(model_id)
                 return self.send_json(result)
 
             except Exception as e:
                 traceback.print_exc()
+                model_ref_counter.release(model_id)
                 return self.send_json({"error": f"Zaman serisi analiz hatası: {self._safe_error_message(e)}"}, 500)
 
         # ── Call Analysis (LLM) explainability ──
@@ -5595,10 +6087,12 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                 add_activity("explained", model_id, meta["name"],
                             f"{submodel_name} için çağrı analizi açıklanabilirlik",
                             username=user["username"])
+                model_ref_counter.release(model_id)
                 return self.send_json(result)
 
             except Exception as e:
                 traceback.print_exc()
+                model_ref_counter.release(model_id)
                 return self.send_json({"error": f"Çağrı analizi açıklanabilirlik hatası: {self._safe_error_message(e)}"}, 500)
 
         try:
@@ -5890,9 +6384,11 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             add_activity("explained", model_id, meta["name"],
                         f"{submodel_name} için açıklanabilirlik analizi", username=user["username"])
             self.send_json(result)
+            model_ref_counter.release(model_id)
 
         except Exception as e:
             traceback.print_exc()
+            model_ref_counter.release(model_id)
             self.send_json({"error": self._safe_error_message(e)}, 500)
 
     # ── Audio Evaluation Handlers ─────────────────────────────────
@@ -5903,10 +6399,17 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         if not user:
             return
 
+        if not _api_rate_limiter.check_heavy(user["username"]):
+            return self.send_json({"error": "Saatlik işlem limitinize ulaştınız. Lütfen daha sonra tekrar deneyin."}, 429)
+
         if not FASTER_WHISPER_AVAILABLE:
             return self.send_json({"error": "faster-whisper yüklü değil. pip install faster-whisper"}, 500)
         if not REQUESTS_AVAILABLE:
             return self.send_json({"error": "requests yüklü değil. pip install requests"}, 500)
+
+        # Per-user model quota check
+        if count_user_models(user["username"]) >= MAX_MODELS_PER_USER:
+            return self.send_json({"error": f"Analiz limitinize ulaştınız (maksimum {MAX_MODELS_PER_USER}). Eski analizleri silerek yer açabilirsiniz."}, 429)
 
         # ── Per-user concurrency check ──
         content_type = self.headers.get("Content-Type", "")
@@ -5921,11 +6424,13 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
 
         # Extract text fields
         model_name = parts.get("model_name", {}).get("value", f"Ses Analizi {datetime.now().strftime('%Y%m%d_%H%M')}")
+        if len(model_name) > 200:
+            return self.send_json({"error": "Analiz adı en fazla 200 karakter olabilir"}, 400)
         schema_json = parts.get("schema", {}).get("value", "[]")
         prompt = parts.get("prompt", {}).get("value", "")
         language = parts.get("language", {}).get("value", "turkish")
         actuals_json = parts.get("actuals", {}).get("value", "{}")
-        visibility = parts.get("visibility", {}).get("value", "public")
+        visibility = parts.get("visibility", {}).get("value", "private")
 
         try:
             schema = json.loads(schema_json)
@@ -5977,10 +6482,13 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             "model_id": model_id,
             "total": len(audio_files),
             "processed": 0,
+            "_username": user["username"],
+            "_action_type": "audio_eval",
         }
 
         try:
-            _audio_eval_pool.submit(
+            _audio_eval_queue.submit(
+                user["username"], job_id,
                 audio_evaluate_pipeline,
                 job_id, model_id, model_name,
                 audio_files, schema, prompt, language,
@@ -6013,6 +6521,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             "total": job.get("total", 0),
             "processed": job.get("processed", 0),
         }
+        if job["status"] == "queued":
+            response["position"] = _audio_eval_queue.get_position(job_id)
         if job["status"] == "done":
             meta = load_model_meta(job["model_id"])
             if meta:
@@ -6029,6 +6539,9 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         user = self._require_auth()
         if not user:
             return
+
+        if not _api_rate_limiter.check_heavy(user["username"]):
+            return self.send_json({"error": "Saatlik işlem limitinize ulaştınız. Lütfen daha sonra tekrar deneyin."}, 429)
 
         if not FASTER_WHISPER_AVAILABLE:
             return self.send_json({"error": "faster-whisper yüklü değil. pip install faster-whisper"}, 500)
@@ -6098,6 +6611,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             "model_id": model_id,
             "total": len(audio_files),
             "processed": 0,
+            "_username": user["username"],
+            "_action_type": "audio_predict",
         }
 
         try:
