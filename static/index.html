@@ -1,0 +1,2811 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tahmin Platformu</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Plus Jakarta Sans', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        slate: { 25: '#FCFCFD', 50: '#F8FAFC', 100: '#F1F5F9', 200: '#E2E8F0', 300: '#CBD5E1', 400: '#94A3B8', 500: '#64748B', 600: '#475569', 700: '#334155', 800: '#1E293B', 900: '#0F172A' },
+                        brand: { 50: '#ECFDF5', 100: '#D1FAE5', 200: '#A7F3D0', 300: '#6EE7B7', 400: '#34D399', 500: '#10B981', 600: '#059669', 700: '#047857', 800: '#065F46', 900: '#064E3B' },
+                        warn: { 400: '#FB923C', 500: '#F97316', 600: '#EA580C' },
+                        danger: { 400: '#F87171', 500: '#EF4444', 600: '#DC2626' },
+                        info: { 400: '#60A5FA', 500: '#3B82F6', 600: '#2563EB' },
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background: #F1F5F9; color: #1E293B; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #E2E8F0; }
+        ::-webkit-scrollbar-thumb { background: #94A3B8; border-radius: 3px; }
+        .card { background: #fff; border: 1px solid #CBD5E1; border-radius: 14px; transition: all 0.2s; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+        .card:hover { border-color: #94A3B8; box-shadow: 0 4px 16px rgba(0,0,0,0.10); }
+        .card-flat { background: #fff; border: 1px solid #CBD5E1; border-radius: 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+        .btn-primary { background: linear-gradient(135deg, #10B981, #059669); color: white; padding: 10px 24px; border-radius: 10px; font-weight: 600; border: none; cursor: pointer; transition: all 0.2s; font-size: 14px; }
+        .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(16, 185, 129, 0.35); }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+        .btn-secondary { background: #E2E8F0; color: #334155; padding: 10px 24px; border-radius: 10px; font-weight: 500; border: 1px solid #CBD5E1; cursor: pointer; transition: all 0.2s; font-size: 14px; }
+        .btn-secondary:hover { background: #CBD5E1; color: #1E293B; }
+        .btn-sm { padding: 6px 14px; font-size: 13px; border-radius: 8px; }
+        .btn-export { background: #FFF7ED; color: #EA580C; border: 1px solid #FED7AA; }
+        .btn-export:hover { background: #FFEDD5; }
+        .btn-danger-sm { background: #FEF2F2; color: #DC2626; border: 1px solid #FECACA; padding: 6px 14px; font-size: 13px; border-radius: 8px; cursor: pointer; transition: all 0.15s; }
+        .btn-danger-sm:hover { background: #FEE2E2; }
+        .tag { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+        .tag-green { background: #ECFDF5; color: #059669; }
+        .tag-orange { background: #FFF7ED; color: #EA580C; }
+        .tag-red { background: #FEF2F2; color: #DC2626; }
+        .tag-gray { background: #F1F5F9; color: #64748B; }
+        .tag-blue { background: #EFF6FF; color: #2563EB; }
+        .tag-purple { background: #FAF5FF; color: #7C3AED; }
+        .endorsed-badge { background: linear-gradient(135deg, #FEF3C7, #FDE68A); color: #92400E; border: 1px solid #FCD34D; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; }
+        .input-field { background: #fff; border: 1px solid #CBD5E1; border-radius: 10px; padding: 10px 14px; color: #1E293B; font-size: 14px; width: 100%; outline: none; transition: border-color 0.2s; }
+        .input-field:focus { border-color: #10B981; box-shadow: 0 0 0 3px rgba(16,185,129,0.1); }
+        select.input-field { appearance: none; background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%2394A3B8' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e"); background-position: right 10px center; background-repeat: no-repeat; background-size: 20px; padding-right: 36px; }
+        .data-table { width: 100%; border-collapse: collapse; }
+        .data-table th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #475569; font-weight: 700; padding: 12px 16px; text-align: left; border-bottom: 2px solid #CBD5E1; white-space: nowrap; background: #F1F5F9; }
+        .data-table td { padding: 14px 16px; border-bottom: 1px solid #E2E8F0; vertical-align: middle; }
+        .data-table tbody tr { transition: background 0.15s; cursor: pointer; }
+        .data-table tbody tr:hover { background: #F0FDF4; }
+        .data-table tbody tr:hover .row-name { color: #059669; }
+        .fade-in { animation: fadeIn 0.35s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .spinner { width: 40px; height: 40px; border: 3px solid #E2E8F0; border-top-color: #10B981; border-radius: 50%; animation: spin 0.8s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .upload-zone { border: 2px dashed #94A3B8; border-radius: 14px; padding: 48px; text-align: center; cursor: pointer; transition: all 0.2s; background: #F8FAFC; }
+        .upload-zone:hover, .upload-zone.dragover { border-color: #10B981; background: #ECFDF5; }
+        .nav-link { padding: 8px 16px; border-radius: 8px; color: #64748B; font-weight: 500; cursor: pointer; transition: all 0.15s; font-size: 14px; }
+        .nav-link:hover { color: #1E293B; background: #F1F5F9; }
+        .nav-link.active { color: #059669; background: #ECFDF5; }
+        .progress-bar { height: 6px; background: #E2E8F0; border-radius: 3px; overflow: hidden; }
+        .progress-bar-fill { height: 100%; background: linear-gradient(90deg, #10B981, #34D399); border-radius: 3px; transition: width 0.3s; }
+        .login-container { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #ECFDF5 0%, #F8FAFC 50%, #EFF6FF 100%); }
+        .section-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #94A3B8; margin-bottom: 12px; }
+        .stat-card { background: #fff; border: 1px solid #CBD5E1; border-radius: 14px; padding: 20px; }
+        .featured-card { background: linear-gradient(135deg, #ECFDF5, #fff); border: 1px solid #6EE7B7; border-radius: 14px; padding: 20px; }
+    </style>
+</head>
+<body class="min-h-screen">
+    <nav id="main-nav" class="hidden bg-white sticky top-0 z-50 px-6 py-3 flex items-center justify-between" style="border-bottom: 1px solid #CBD5E1; box-shadow: 0 1px 4px rgba(0,0,0,0.07);">
+        <div class="flex items-center gap-3 cursor-pointer" onclick="navigate('/')">
+            <div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background: linear-gradient(135deg, #10B981, #059669);">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+            </div>
+            <span class="font-bold text-lg tracking-tight text-slate-800">Tahmin Platformu</span>
+        </div>
+        <div class="flex items-center gap-1" id="nav-links"></div>
+        <div class="flex items-center gap-3" id="nav-user"></div>
+    </nav>
+
+    <main id="app" class="max-w-7xl mx-auto px-6 py-8"></main>
+
+    <script>
+    // ══════════════════════════════════════════════════════════
+    //  SECURITY: HTML ESCAPING
+    // ══════════════════════════════════════════════════════════
+    function esc(str) {
+        if (str === null || str === undefined) return '';
+        return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
+    // Escape for use inside single-quoted JS strings within HTML onclick attributes.
+    // Two-layer escaping: JS string escape first, then HTML entity encode for attribute safety.
+    function escAttr(str) {
+        if (str === null || str === undefined) return '';
+        // Step 1: JS string escape (handles \, ', newlines)
+        var s = String(str).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n').replace(/\r/g,'\\r');
+        // Step 2: HTML entity encode for safe embedding in HTML attributes
+        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  STATE & AUTH
+    // ══════════════════════════════════════════════════════════
+    const API = '';
+    let currentRoute = '/';
+    let chartInstances = {};
+    let currentUser = null;
+    let authToken = localStorage.getItem('authToken') || null;
+
+    async function api(path, opts = {}) {
+        const headers = opts.headers || {};
+        if (authToken) headers['Authorization'] = 'Bearer ' + authToken;
+        opts.headers = headers;
+        let res;
+        try {
+            res = await fetch(API + path, opts);
+        } catch (e) {
+            return { error: 'Sunucuya bağlanılamadı. Lütfen ağ bağlantınızı kontrol edin.' };
+        }
+        if (res.status === 401 && path !== '/api/auth/me' && path !== '/api/auth/login') {
+            currentUser = null;
+            authToken = null;
+            localStorage.removeItem('authToken');
+            renderLogin();
+            return { error: 'Oturum süresi doldu' };
+        }
+        if (opts.raw) return res;
+        try {
+            return await res.json();
+        } catch (e) {
+            return { error: `Sunucu yanıtı okunamadı (HTTP ${res.status}). Lütfen tekrar deneyin.` };
+        }
+    }
+
+    async function checkAuth() {
+        if (!authToken) return false;
+        const res = await api('/api/auth/me');
+        if (res.authenticated) {
+            currentUser = res.user;
+            return true;
+        }
+        currentUser = null;
+        authToken = null;
+        localStorage.removeItem('authToken');
+        return false;
+    }
+
+    function isAdmin() {
+        return currentUser && (currentUser.role === 'admin' || currentUser.role === 'master_admin');
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  ROUTER
+    // ══════════════════════════════════════════════════════════
+    function navigate(path) { window.location.hash = '#' + path; }
+    function getRoute() { return window.location.hash.slice(1) || '/'; }
+
+    window.addEventListener('hashchange', () => router());
+    window.addEventListener('load', async () => {
+        const ok = await checkAuth();
+        if (!ok) { renderLogin(); return; }
+        showNav();
+        router();
+    });
+
+    async function router() {
+        if (!currentUser) { renderLogin(); return; }
+        const path = getRoute();
+        currentRoute = path;
+        destroyCharts();
+        updateNav(path);
+
+        if (path === '/') return renderDashboard();
+        if (path === '/library') return renderLibrary();
+        if (path === '/train') return renderTrain();
+        if (path === '/admin') return renderAdmin();
+        if (path === '/settings') return renderSettings();
+
+        let m;
+        if (m = path.match(/^\/model\/([^/]+)\/results$/)) return renderResults(m[1]);
+        if (m = path.match(/^\/model\/([^/]+)\/predict\/([^/]+)$/)) return renderSubmodelPredict(m[1], m[2]);
+        if (m = path.match(/^\/model\/([^/]+)\/predict-audio$/)) return renderAudioPredict(m[1]);
+        if (m = path.match(/^\/model\/([^/]+)\/export\/([^/]+)$/)) return renderExport(m[1], m[2]);
+
+        renderNotFound();
+    }
+
+    function showNav() {
+        document.getElementById('main-nav').classList.remove('hidden');
+        const links = document.getElementById('nav-links');
+        links.innerHTML = `
+            <div class="nav-link" onclick="navigate('/')" data-nav="dashboard">Ana Sayfa</div>
+            <div class="nav-link" onclick="navigate('/library')" data-nav="library">Kütüphane</div>
+            <div class="nav-link" onclick="navigate('/train')" data-nav="train">
+                <span class="flex items-center gap-1.5">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Yeni Model
+                </span>
+            </div>
+            ${isAdmin() ? '<div class="nav-link" onclick="navigate(\'/admin\')" data-nav="admin">Yönetim</div>' : ''}
+        `;
+        const userDiv = document.getElementById('nav-user');
+        const roleBadge = currentUser.role === 'master_admin' ? '<span class="tag tag-purple text-xs">Ana Yönetici</span>'
+            : currentUser.role === 'admin' ? '<span class="tag tag-blue text-xs">Yönetici</span>'
+            : '';
+        userDiv.innerHTML = `
+            <div class="flex items-center gap-2">
+                ${roleBadge}
+                <span class="text-sm font-medium text-slate-600">${esc(currentUser.display_name || currentUser.username)}</span>
+            </div>
+            <button class="btn-secondary btn-sm" onclick="logout()">Çıkış</button>
+        `;
+    }
+
+    function updateNav(path) {
+        document.querySelectorAll('.nav-link').forEach(el => {
+            el.classList.remove('active');
+            const nav = el.dataset.nav;
+            if (nav === 'dashboard' && path === '/') el.classList.add('active');
+            if (nav === 'library' && path === '/library') el.classList.add('active');
+            if (nav === 'train' && path.startsWith('/train')) el.classList.add('active');
+            if (nav === 'admin' && path === '/admin') el.classList.add('active');
+        });
+    }
+
+    function destroyCharts() { Object.values(chartInstances).forEach(c => c.destroy()); chartInstances = {}; }
+    function app() { return document.getElementById('app'); }
+
+    function timeAgo(dateStr) {
+        const d = new Date(dateStr);
+        const now = new Date();
+        const diff = (now - d) / 1000;
+        if (diff < 60) return 'az önce';
+        if (diff < 3600) return Math.floor(diff/60) + ' dk önce';
+        if (diff < 86400) return Math.floor(diff/3600) + ' sa önce';
+        if (diff < 2592000) return Math.floor(diff/86400) + ' gün önce';
+        return d.toLocaleDateString('tr-TR');
+    }
+
+    function scoreColor(score, taskType) {
+        // For timeseries (MASE): lower is better
+        if (taskType === 'timeseries') {
+            if (score <= 0.5) return 'text-brand-600';   // excellent
+            if (score <= 1.0) return 'text-brand-700';   // good (better than naive)
+            if (score <= 2.0) return 'text-warn-500';    // mediocre
+            return 'text-danger-500';                     // poor
+        }
+        // For tabular: higher is better (0-1 scale)
+        if (score >= 0.9) return 'text-brand-600';
+        if (score >= 0.75) return 'text-brand-700';
+        if (score >= 0.6) return 'text-warn-500';
+        return 'text-danger-500';
+    }
+
+    function formatScore(score, taskType) {
+        if (taskType === 'timeseries') {
+            return score.toFixed(2);   // raw MASE value like "0.42"
+        }
+        return '%' + (score * 100).toFixed(1);  // percentage like "%92.3"
+    }
+
+    function scoreLabel(taskType) {
+        if (taskType === 'timeseries') return 'MASE';
+        if (taskType === 'call_analysis') return 'Doğruluk';
+        return 'Skor';
+    }
+
+    function cpuTag(cat) {
+        if (cat === 'Düşük') return '<span class="tag tag-green">Düşük CPU</span>';
+        if (cat === 'Orta') return '<span class="tag tag-orange">Orta CPU</span>';
+        return '<span class="tag tag-red">Yüksek CPU</span>';
+    }
+
+    function sqlTag(sql) {
+        if (sql.easy_sql) return '<span class="tag tag-green">Saatlik çalışabilir</span>';
+        return '<span class="tag tag-gray">Desteklenmiyor</span>';
+    }
+
+    function airflowTag(af) {
+        if (af.supported) return '<span class="tag tag-green">Günlük çalışabilir</span>';
+        return '<span class="tag tag-gray">Desteklenmiyor</span>';
+    }
+
+    async function logout() {
+        await api('/api/auth/logout', { method: 'POST' });
+        currentUser = null;
+        authToken = null;
+        localStorage.removeItem('authToken');
+        document.getElementById('main-nav').classList.add('hidden');
+        renderLogin();
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  LOGIN
+    // ══════════════════════════════════════════════════════════
+    function renderLogin() {
+        document.getElementById('main-nav').classList.add('hidden');
+        app().innerHTML = `
+        <div class="login-container" style="margin: -32px -24px; padding: 32px 24px;">
+            <div class="card p-10 w-full max-w-md fade-in" style="box-shadow: 0 8px 32px rgba(0,0,0,0.08);">
+                <div class="text-center mb-8">
+                    <div class="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4" style="background: linear-gradient(135deg, #10B981, #059669);">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                    </div>
+                    <h1 class="text-2xl font-bold text-slate-800 mb-1">Tahmin Platformu</h1>
+                    <p class="text-slate-500 text-sm">Hesabınıza giriş yapın</p>
+                </div>
+                <div id="login-error" class="hidden mb-4 p-3 rounded-lg bg-red-50 text-danger-600 text-sm border border-red-200"></div>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-slate-600 mb-1.5">Kullanıcı Adı</label>
+                        <input class="input-field" id="login-user" placeholder="admin" autofocus onkeydown="if(event.key==='Enter')doLogin()">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-600 mb-1.5">Şifre</label>
+                        <input class="input-field" id="login-pass" type="password" placeholder="••••••" onkeydown="if(event.key==='Enter')doLogin()">
+                    </div>
+                    <button class="btn-primary w-full text-center py-3" onclick="doLogin()" id="login-btn">Giriş Yap</button>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    async function doLogin() {
+        const username = document.getElementById('login-user').value.trim();
+        const password = document.getElementById('login-pass').value;
+        const errDiv = document.getElementById('login-error');
+        const btn = document.getElementById('login-btn');
+
+        if (!username || !password) {
+            errDiv.textContent = 'Kullanıcı adı ve şifre gerekli';
+            errDiv.classList.remove('hidden');
+            return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = 'Giriş yapılıyor...';
+
+        try {
+            const res = await fetch(API + '/api/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password }),
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                authToken = data.token;
+                localStorage.setItem('authToken', authToken);
+                currentUser = data.user;
+                showNav();
+                navigate('/');
+                router();
+            } else {
+                errDiv.textContent = data.error || 'Giriş başarısız';
+                errDiv.classList.remove('hidden');
+            }
+        } catch (err) {
+            errDiv.textContent = 'Sunucuya bağlanılamadı';
+            errDiv.classList.remove('hidden');
+        }
+
+        btn.disabled = false;
+        btn.textContent = 'Giriş Yap';
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  DASHBOARD
+    // ══════════════════════════════════════════════════════════
+    async function renderDashboard() {
+        app().innerHTML = `<div class="flex items-center justify-center py-20"><div class="spinner"></div></div>`;
+        const data = await api('/api/dashboard');
+        if (data.error) { app().innerHTML = `<div class="card p-8 text-center text-slate-500">${esc(data.error)}</div>`; return; }
+
+        const endorsedHtml = data.endorsed && data.endorsed.length > 0 ? `
+            <div class="mb-8">
+                <div class="section-title flex items-center gap-2">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#D97706" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                    Yönetici Onaylı Modeller
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    ${data.endorsed.map(m => `
+                        <div class="featured-card cursor-pointer hover:shadow-md transition-all" onclick="navigate('/model/${m.id}/results')">
+                            <div class="flex items-start justify-between mb-2">
+                                <div class="font-semibold text-slate-800 truncate">${esc(m.name)}</div>
+                                <span class="endorsed-badge flex items-center gap-1">
+                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                                    Onaylı
+                                </span>
+                            </div>
+                            <div class="text-sm text-slate-500 mb-2">${esc(m.target_column)} · ${m.task_type === 'classification' ? 'Sınıflandırma' : m.task_type === 'timeseries' ? 'Zaman Serisi' : m.task_type === 'text' ? 'Sınıflandırma' : m.task_type === 'call_analysis' ? 'Çağrı Analizi' : 'Regresyon'}</div>
+                            <div class="${scoreColor(m.best_score, m.task_type)} font-mono font-bold text-lg">${formatScore(m.best_score, m.task_type)}</div>
+                            <div class="text-xs text-slate-400 mt-1">Oluşturan: ${esc(m.owner || '—')}</div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        ` : '';
+
+        const popularHtml = data.popular && data.popular.length > 0 ? `
+            <div class="mb-8">
+                <div class="section-title flex items-center gap-2">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    En Çok Ziyaret Edilen
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-3">
+                    ${data.popular.map((m, i) => `
+                        <div class="stat-card cursor-pointer hover:shadow-md transition-all" onclick="navigate('/model/${m.id}/results')">
+                            <div class="flex items-center gap-2 mb-2">
+                                <span class="text-xs font-bold text-slate-400">#${i+1}</span>
+                                <span class="font-medium text-sm text-slate-700 truncate">${esc(m.name)}</span>
+                            </div>
+                            <div class="${scoreColor(m.best_score, m.task_type)} font-mono font-bold">${formatScore(m.best_score, m.task_type)}</div>
+                            <div class="text-xs text-slate-400 mt-1">${m.view_count || 0} görüntüleme</div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        ` : '';
+
+        app().innerHTML = `
+        <div class="fade-in">
+            <div class="flex items-end justify-between mb-8">
+                <div>
+                    <h1 class="text-3xl font-bold tracking-tight text-slate-900 mb-1">Merhaba, ${esc(currentUser.display_name || currentUser.username)}</h1>
+                    <p class="text-slate-500 text-sm">Tahmin modellerinizi buradan yönetin</p>
+                </div>
+                <button class="btn-primary flex items-center gap-2" onclick="navigate('/train')">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Yeni Model Eğit
+                </button>
+            </div>
+
+            <!-- Stats -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+                <div class="stat-card">
+                    <div class="text-slate-500 text-xs font-medium mb-1">Toplam Model</div>
+                    <div class="text-3xl font-bold text-slate-800">${data.total_models}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="text-slate-500 text-xs font-medium mb-1">Benim Modellerim</div>
+                    <div class="text-3xl font-bold text-slate-800">${data.my_model_count}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="text-slate-500 text-xs font-medium mb-1">${data.best_model && data.best_model.task_type === 'timeseries' ? 'En İyi MASE' : 'En İyi Skor'}</div>
+                    ${data.best_model ? `<div class="text-3xl font-bold ${scoreColor(data.best_model.score, data.best_model.task_type)}">${formatScore(data.best_model.score, data.best_model.task_type)}</div><div class="text-xs text-slate-400 truncate mt-0.5">${esc(data.best_model.name)}</div>` : '<div class="text-slate-400 text-sm">Henüz model yok</div>'}
+                </div>
+                <div class="stat-card flex flex-col justify-between">
+                    <div class="text-slate-500 text-xs font-medium mb-2">Hızlı İşlemler</div>
+                    <button class="btn-secondary btn-sm w-full text-center" onclick="navigate('/library')">Kütüphaneye Git</button>
+                </div>
+            </div>
+
+            ${endorsedHtml}
+            ${popularHtml}
+
+            <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+                <div class="lg:col-span-3">
+                    <div class="section-title">Son Eğitilen Modeller (Herkese Açık)</div>
+                    <div class="card-flat overflow-hidden">
+                        ${data.recent_public && data.recent_public.length ? `
+                        <table class="data-table">
+                            <thead><tr><th>Model</th><th>Skor</th><th>Oluşturan</th><th>Tarih</th></tr></thead>
+                            <tbody>
+                            ${data.recent_public.map(m => `
+                                <tr onclick="navigate('/model/${m.id}/results')">
+                                    <td>
+                                        <div class="row-name font-medium text-sm transition-colors">${esc(m.name)}</div>
+                                        <div class="text-slate-400 text-xs mt-0.5">${esc(m.target_column)} · ${m.task_type === 'classification' ? 'Sınıflandırma' : m.task_type === 'timeseries' ? 'Zaman Serisi' : m.task_type === 'text' ? 'Sınıflandırma' : m.task_type === 'call_analysis' ? 'Çağrı Analizi' : 'Regresyon'} · ${m.num_rows} satır</div>
+                                    </td>
+                                    <td class="${scoreColor(m.best_score, m.task_type)} font-mono text-sm font-bold">${formatScore(m.best_score, m.task_type)}</td>
+                                    <td class="text-slate-500 text-xs">${esc(m.owner || '—')}</td>
+                                    <td class="text-slate-400 text-xs">${timeAgo(m.created_at)}</td>
+                                </tr>
+                            `).join('')}
+                            </tbody>
+                        </table>
+                        ` : '<div class="p-8 text-center text-slate-400"><p class="mb-3">Henüz model eğitilmedi</p><button class="btn-primary btn-sm" onclick="navigate(\'/train\')">İlk Modelinizi Eğitin</button></div>'}
+                    </div>
+                </div>
+
+                <div class="lg:col-span-2">
+                    <div class="section-title">Son Aktiviteler</div>
+                    <div class="card-flat p-4 space-y-3 max-h-96 overflow-y-auto">
+                        ${data.activity && data.activity.length ? data.activity.map(a => `
+                            <div class="flex items-start gap-3">
+                                <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-slate-100 text-sm">${a.action === 'trained' ? '🎯' : a.action === 'predicted' ? '⚡' : a.action === 'endorsed' ? '⭐' : '📌'}</div>
+                                <div class="flex-1 min-w-0">
+                                    <div class="text-sm text-slate-700">${esc(a.details || a.action)}</div>
+                                    <div class="text-slate-400 text-xs mt-0.5">${esc(a.username || '')} · ${timeAgo(a.timestamp)}</div>
+                                </div>
+                            </div>
+                        `).join('') : '<div class="text-slate-400 text-sm text-center py-4">Henüz aktivite yok</div>'}
+                    </div>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  LIBRARY
+    // ══════════════════════════════════════════════════════════
+    async function renderLibrary() {
+        app().innerHTML = `<div class="flex items-center justify-center py-20"><div class="spinner"></div></div>`;
+        const data = await api('/api/models');
+        if (data.error) { app().innerHTML = `<div class="card p-8 text-center text-slate-500">${esc(data.error)}</div>`; return; }
+
+        app().innerHTML = `
+        <div class="fade-in">
+            <div class="flex items-end justify-between mb-8">
+                <div>
+                    <h1 class="text-3xl font-bold tracking-tight text-slate-900 mb-1">Model Kütüphanesi</h1>
+                    <p class="text-slate-500 text-sm">${data.total} model listeleniyor</p>
+                </div>
+                <button class="btn-primary flex items-center gap-2" onclick="navigate('/train')">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Yeni Model
+                </button>
+            </div>
+
+            <div class="mb-4">
+                <input class="input-field max-w-md" type="text" placeholder="Model adı, hedef sütun veya sahibi ile arayın..." id="lib-search" oninput="filterLibrary()">
+            </div>
+
+            <div class="card-flat overflow-hidden">
+                <table class="data-table" id="lib-models">
+                    <thead><tr>
+                        <th>Model Adı</th>
+                        <th>Skor</th>
+                        <th>Tür</th>
+                        <th>Sahip</th>
+                        <th>Görünürlük</th>
+                        <th>Tarih</th>
+                        <th></th>
+                    </tr></thead>
+                    <tbody id="lib-tbody">
+                        ${renderModelRows(data.models)}
+                    </tbody>
+                </table>
+            </div>
+        </div>`;
+
+        window._libraryModels = data.models;
+    }
+
+    function renderModelRows(models) {
+        if (!models.length) return '<tr><td colspan="7" class="p-8 text-center text-slate-400">Filtrelerinize uygun model bulunamadı</td></tr>';
+        return models.map(m => `
+            <tr onclick="navigate('/model/${m.id}/results')">
+                <td>
+                    <div class="flex items-center gap-2">
+                        <div class="row-name font-medium text-sm transition-colors">${esc(m.name)}</div>
+                        ${m.endorsed ? '<span class="endorsed-badge text-xs">Onaylı</span>' : ''}
+                    </div>
+                    <div class="text-slate-400 text-xs mt-0.5">Hedef: ${esc(m.target_column)} · ${m.num_rows} satır</div>
+                </td>
+                <td class="${scoreColor(m.best_score, m.task_type)} font-mono text-sm font-bold">${formatScore(m.best_score, m.task_type)}</td>
+                <td><span class="tag ${m.task_type === 'classification' ? 'tag-green' : m.task_type === 'timeseries' ? 'tag-blue' : m.task_type === 'text' ? 'tag-green' : m.task_type === 'call_analysis' ? 'tag-purple' : 'tag-orange'}">${m.task_type === 'classification' ? 'Sınıf.' : m.task_type === 'timeseries' ? 'Z.Serisi' : m.task_type === 'text' ? 'Sınıf.' : m.task_type === 'call_analysis' ? 'Ses/LLM' : 'Regr.'}</span></td>
+                <td class="text-slate-500 text-xs">${esc(m.owner || '—')}</td>
+                <td><span class="tag ${m.visibility === 'private' ? 'tag-red' : 'tag-green'}">${m.visibility === 'private' ? 'Özel' : 'Açık'}</span></td>
+                <td class="text-slate-400 text-xs">${timeAgo(m.created_at)}</td>
+                <td class="text-right" onclick="event.stopPropagation()">
+                    ${m.task_type === 'call_analysis' ? `
+                        <button class="btn-sm btn-export mr-1" onclick="navigate('/model/${m.id}/predict-audio')" title="Modeli Çalıştır">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                        </button>
+                    ` : ''}
+                    ${(m.owner === currentUser.username || isAdmin()) ? `
+                        <button class="btn-danger-sm" onclick="deleteModel('${m.id}', '${escAttr(m.name)}', '/library')" title="Sil">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        </button>
+                    ` : ''}
+                </td>
+            </tr>
+        `).join('');
+    }
+
+    function filterLibrary() {
+        const search = document.getElementById('lib-search')?.value?.toLowerCase() || '';
+        let models = window._libraryModels || [];
+        if (search) models = models.filter(m =>
+            m.name.toLowerCase().includes(search) || m.target_column.toLowerCase().includes(search) ||
+            (m.owner || '').toLowerCase().includes(search)
+        );
+        const tbody = document.getElementById('lib-tbody');
+        if (tbody) tbody.innerHTML = renderModelRows(models);
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  TRAIN
+    // ══════════════════════════════════════════════════════════
+    let uploadData = null;
+
+    async function renderTrain() {
+        const presets = await api('/api/presets');
+        if (presets.error) return;
+
+        app().innerHTML = `
+        <div class="fade-in max-w-3xl mx-auto">
+            <div class="mb-8">
+                <h1 class="text-3xl font-bold tracking-tight text-slate-900 mb-1">Yeni Model Eğit</h1>
+                <p class="text-slate-500 text-sm">CSV dosyanızı yükleyin veya ses dosyalarını değerlendirin</p>
+            </div>
+
+            <!-- Mode Selector -->
+            <div class="card p-4 mb-6" id="mode-selector">
+                <div class="flex gap-3">
+                    <button class="flex-1 py-3 px-4 rounded-xl text-sm font-semibold transition-all bg-brand-50 border-2 border-brand-400 text-brand-700" id="mode-btn-ml" onclick="switchTrainMode('ml')">
+                        <div class="flex items-center justify-center gap-2">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                            AutoGluon ML Eğitimi
+                        </div>
+                        <div class="text-xs font-normal mt-1 opacity-70">CSV ile sınıflandırma, regresyon, zaman serisi</div>
+                    </button>
+                    <button class="flex-1 py-3 px-4 rounded-xl text-sm font-semibold transition-all bg-slate-50 border-2 border-slate-200 text-slate-500" id="mode-btn-audio" onclick="switchTrainMode('audio')">
+                        <div class="flex items-center justify-center gap-2">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                            Çağrı Analizi (LLM)
+                        </div>
+                        <div class="text-xs font-normal mt-1 opacity-70">Ses dosyalarını LLM ile değerlendir</div>
+                    </button>
+                </div>
+            </div>
+
+            <!-- ═══ ML TRAINING PATH ═══ -->
+            <div id="ml-training-path">
+                <div id="train-step1">
+                    <div class="card p-6 mb-6">
+                        <h3 class="font-semibold text-slate-800 mb-4 flex items-center gap-2">
+                            <span class="w-7 h-7 rounded-full bg-brand-500 text-white text-xs flex items-center justify-center font-bold">1</span>
+                            CSV Dosyası Yükle
+                        </h3>
+                        <div class="upload-zone" id="upload-zone" onclick="document.getElementById('csv-file').click()"
+                             ondragover="event.preventDefault(); this.classList.add('dragover')"
+                             ondragleave="this.classList.remove('dragover')"
+                             ondrop="handleDrop(event)">
+                            <svg class="mx-auto mb-3" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                            <p class="text-slate-600 font-medium">CSV dosyanızı buraya sürükleyin veya tıklayarak seçin</p>
+                            <p class="text-slate-400 text-sm mt-1">.csv dosyaları desteklenir</p>
+                        </div>
+                        <input type="file" id="csv-file" accept=".csv" class="hidden" onchange="handleFileSelect(this)">
+                    </div>
+                </div>
+
+                <div id="train-step2" class="hidden">
+                    <div class="card p-6 mb-6">
+                        <h3 class="font-semibold text-slate-800 mb-4 flex items-center gap-2">
+                            <span class="w-7 h-7 rounded-full bg-brand-500 text-white text-xs flex items-center justify-center font-bold">2</span>
+                            Eğitim Ayarları
+                        </h3>
+                        <div class="mb-4"><span class="tag tag-green" id="file-info"></span></div>
+                        <div class="mb-5 overflow-x-auto">
+                            <div class="text-xs text-slate-500 mb-2">Veri Önizleme (ilk 5 satır)</div>
+                            <div id="preview-table" class="text-xs font-mono"></div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4 mb-4">
+                            <div>
+                                <label class="block text-sm font-medium text-slate-600 mb-1.5">Model Adı</label>
+                                <input class="input-field" id="model-name" placeholder="Örn: Müşteri Tahmin Modeli">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-600 mb-1.5">Tahmin Edilecek Sütun</label>
+                                <select class="input-field" id="target-col"></select>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-3 gap-4 mb-6">
+                            <div>
+                                <label class="block text-sm font-medium text-slate-600 mb-1.5">Görev Tipi</label>
+                                <select class="input-field" id="task-type" onchange="onTaskTypeChange()">
+                                    <option value="classification">Sınıflandırma</option>
+                                    <option value="regression">Regresyon (Sayısal)</option>
+                                    <option value="timeseries">Zaman Serisi Tahmini</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-600 mb-1.5">Kalite Seviyesi</label>
+                                <select class="input-field" id="preset">
+                                    ${presets.map(p => `<option value="${esc(p.value)}">${esc(p.label)}</option>`).join('')}
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-600 mb-1.5">Görünürlük</label>
+                                <select class="input-field" id="visibility">
+                                    <option value="public">Herkese Açık</option>
+                                    <option value="private">Özel (Sadece Ben)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div id="ts-fields" class="hidden mb-6">
+                            <div class="p-4 rounded-xl bg-blue-50 border border-blue-200 mb-4">
+                                <div class="flex items-center gap-2 mb-2">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                    <span class="text-sm font-semibold text-blue-800">Zaman Serisi Ayarları</span>
+                                </div>
+                                <p class="text-xs text-blue-600">Zaman serisi tahmini kronolojik sıralama gerektirir. Rastgele bölme yapılmaz, satırlar silinmez.</p>
+                            </div>
+                            <div class="grid grid-cols-3 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-slate-600 mb-1.5">Zaman Damgası Sütunu <span class="text-danger-500">*</span></label>
+                                    <select class="input-field" id="timestamp-col"></select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-slate-600 mb-1.5">Seri ID Sütunu <span class="text-slate-400">(opsiyonel)</span></label>
+                                    <select class="input-field" id="item-id-col"><option value="">— Tekli seri —</option></select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-slate-600 mb-1.5">Tahmin Uzunluğu (adım)</label>
+                                    <input class="input-field" type="number" id="prediction-length" value="10" min="1" max="500">
+                                </div>
+                            </div>
+                        </div>
+                        <button class="btn-primary w-full text-center flex items-center justify-center gap-2 py-3" onclick="startTraining()">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                            Eğitimi Başlat
+                        </button>
+                    </div>
+                </div>
+
+                <div id="train-step3" class="hidden">
+                    <div class="card p-10 text-center">
+                        <div class="spinner mx-auto mb-5"></div>
+                        <h3 class="font-bold text-xl text-slate-800 mb-2">Eğitim Devam Ediyor...</h3>
+                        <p class="text-slate-500 text-sm mb-4">AutoGluon verileriniz için en iyi modelleri buluyor</p>
+                        <div class="progress-bar w-72 mx-auto">
+                            <div class="progress-bar-fill" id="train-progress" style="width: 10%"></div>
+                        </div>
+                        <p class="text-slate-400 text-xs mt-3" id="train-status-text">Veriler hazırlanıyor...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══ CALL ANALYSIS PATH ═══ -->
+            <div id="audio-training-path" class="hidden">
+                <div class="card p-6 mb-6">
+                    <h3 class="font-semibold text-slate-800 mb-4 flex items-center gap-2">
+                        <span class="w-7 h-7 rounded-full bg-purple-500 text-white text-xs flex items-center justify-center font-bold">1</span>
+                        Değişken Şeması Tanımla
+                    </h3>
+                    <p class="text-xs text-slate-500 mb-3">LLM'in her ses dosyasından çıkarmasını istediğiniz değişkenleri tanımlayın.</p>
+                    <div id="schema-builder">
+                        <div id="schema-rows"></div>
+                        <button class="btn-secondary btn-sm mt-2 flex items-center gap-1" onclick="addSchemaRow()">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                            Değişken Ekle
+                        </button>
+                    </div>
+                </div>
+
+                <div class="card p-6 mb-6">
+                    <h3 class="font-semibold text-slate-800 mb-4 flex items-center gap-2">
+                        <span class="w-7 h-7 rounded-full bg-purple-500 text-white text-xs flex items-center justify-center font-bold">2</span>
+                        Dil & Değerlendirme Prompt'u
+                    </h3>
+                    <div class="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-600 mb-1.5">Model Adı</label>
+                            <input class="input-field" id="audio-model-name" placeholder="Örn: Müşteri Memnuniyet Analizi">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-600 mb-1.5">Ses Dili</label>
+                            <select class="input-field" id="audio-language">
+                                <option value="turkish">Türkçe</option>
+                                <option value="english">İngilizce</option>
+                                <option value="german">Almanca</option>
+                                <option value="french">Fransızca</option>
+                                <option value="spanish">İspanyolca</option>
+                                <option value="italian">İtalyanca</option>
+                                <option value="dutch">Hollandaca</option>
+                                <option value="portuguese">Portekizce</option>
+                                <option value="russian">Rusça</option>
+                                <option value="arabic">Arapça</option>
+                                <option value="chinese">Çince</option>
+                                <option value="japanese">Japonca</option>
+                                <option value="korean">Korece</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-600 mb-1.5">Değerlendirme Prompt'u</label>
+                        <textarea class="input-field" id="audio-prompt" rows="6" placeholder="LLM'e vereceğiniz değerlendirme talimatı. Örn: Bu bir çağrı merkezi kaydıdır. Müşteri temsilcisinin performansını değerlendir. Müşterinin sorununun çözülüp çözülmediğini belirle..."></textarea>
+                    </div>
+                    <div class="mt-3">
+                        <label class="block text-sm font-medium text-slate-600 mb-1.5">Görünürlük</label>
+                        <select class="input-field" id="audio-visibility" style="width: 200px;">
+                            <option value="public">Herkese Açık</option>
+                            <option value="private">Özel (Sadece Ben)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="card p-6 mb-6">
+                    <h3 class="font-semibold text-slate-800 mb-4 flex items-center gap-2">
+                        <span class="w-7 h-7 rounded-full bg-purple-500 text-white text-xs flex items-center justify-center font-bold">3</span>
+                        Ses Dosyalarını Yükle & Gerçek Değerleri Gir
+                    </h3>
+                    <div class="upload-zone mb-4" id="audio-upload-zone"
+                         onclick="document.getElementById('audio-files-input').click()"
+                         ondragover="event.preventDefault(); this.classList.add('dragover')"
+                         ondragleave="this.classList.remove('dragover')"
+                         ondrop="handleAudioDrop(event)">
+                        <svg class="mx-auto mb-3" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="1.5">
+                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>
+                        </svg>
+                        <p class="text-slate-600 font-medium">Ses dosyalarını buraya sürükleyin veya tıklayarak seçin</p>
+                        <p class="text-slate-400 text-sm mt-1">.wav ve .mp3 dosyaları desteklenir (birden fazla seçilebilir)</p>
+                    </div>
+                    <input type="file" id="audio-files-input" accept=".wav,.mp3,.m4a,.ogg,.flac" multiple class="hidden" onchange="handleAudioFileSelect(this)">
+
+                    <div id="audio-files-list"></div>
+                </div>
+
+                <button class="btn-primary w-full text-center flex items-center justify-center gap-2 py-3 mb-6" id="start-audio-eval-btn" onclick="startAudioEvaluation()">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    Değerlendirmeyi Başlat
+                </button>
+
+                <div id="audio-eval-progress" class="hidden">
+                    <div class="card p-10 text-center">
+                        <div class="spinner mx-auto mb-5"></div>
+                        <h3 class="font-bold text-xl text-slate-800 mb-2">Ses Değerlendirmesi Devam Ediyor...</h3>
+                        <p class="text-slate-500 text-sm mb-2">Transkripsiyon + LLM Analizi yapılıyor</p>
+                        <div class="progress-bar w-72 mx-auto">
+                            <div class="progress-bar-fill" id="audio-eval-bar" style="width: 5%"></div>
+                        </div>
+                        <p class="text-slate-400 text-xs mt-3" id="audio-eval-status-text">Dosyalar işleniyor...</p>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+
+        // Initialize with one schema row
+        addSchemaRow();
+    }
+
+    function handleDrop(e) { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) processFile(f); }
+    function handleFileSelect(input) { const f = input.files[0]; if (f) processFile(f); }
+
+    function onTaskTypeChange() {
+        const taskType = document.getElementById('task-type').value;
+        const tsFields = document.getElementById('ts-fields');
+        if (tsFields) {
+            tsFields.classList.toggle('hidden', taskType !== 'timeseries');
+        }
+    }
+
+    async function processFile(file) {
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+            const res = await fetch(API + '/api/upload-csv', {
+                method: 'POST', body: formData,
+                headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {},
+            });
+            const data = await res.json();
+            if (data.error) { alert('Hata: ' + data.error); return; }
+            uploadData = data;
+            document.getElementById('train-step1').classList.add('hidden');
+            document.getElementById('train-step2').classList.remove('hidden');
+            document.getElementById('file-info').textContent = `${data.filename} — ${data.columns.length} sütun`;
+            const select = document.getElementById('target-col');
+            select.innerHTML = data.columns.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+
+            // Populate time series dropdowns
+            const tsCol = document.getElementById('timestamp-col');
+            const idCol = document.getElementById('item-id-col');
+            if (tsCol) tsCol.innerHTML = data.columns.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+            if (idCol) idCol.innerHTML = '<option value="">— Tekli seri —</option>' + data.columns.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+
+            renderPreviewTable(data.preview, data.columns);
+        } catch (err) { alert('Yükleme hatası: ' + err.message); }
+    }
+
+    function renderPreviewTable(rows, columns) {
+        let html = '<table class="data-table"><thead><tr>';
+        columns.forEach(c => { html += `<th class="text-xs">${esc(c)}</th>`; });
+        html += '</tr></thead><tbody>';
+        rows.forEach(row => {
+            html += '<tr>';
+            columns.forEach(c => {
+                const val = row[c];
+                const isNull = val === null || val === undefined || val === '' || (typeof val === 'number' && !isFinite(val));
+                html += isNull ? `<td class="p-2 border-b border-slate-100 whitespace-nowrap text-slate-400 italic">BOŞ</td>`
+                    : `<td class="p-2 text-slate-700 border-b border-slate-100 whitespace-nowrap max-w-32 truncate">${esc(val)}</td>`;
+            });
+            html += '</tr>';
+        });
+        html += '</tbody></table>';
+        document.getElementById('preview-table').innerHTML = html;
+    }
+
+    async function startTraining() {
+        if (!uploadData) return;
+        const taskType = document.getElementById('task-type').value;
+        const payload = {
+            temp_id: uploadData.temp_id,
+            target_column: document.getElementById('target-col').value,
+            task_type: taskType,
+            preset: document.getElementById('preset').value,
+            model_name: document.getElementById('model-name').value || 'İsimsiz Model',
+            visibility: document.getElementById('visibility').value,
+        };
+
+        // Add time series specific params
+        if (taskType === 'timeseries') {
+            const tsCol = document.getElementById('timestamp-col');
+            const idCol = document.getElementById('item-id-col');
+            const predLen = document.getElementById('prediction-length');
+            if (tsCol) payload.timestamp_column = tsCol.value;
+            if (idCol && idCol.value) payload.item_id_column = idCol.value;
+            if (predLen) payload.prediction_length = parseInt(predLen.value) || 10;
+
+            if (!payload.timestamp_column) {
+                alert('Zaman serisi için zaman damgası sütunu seçmelisiniz.');
+                return;
+            }
+        }
+
+        document.getElementById('train-step1').classList.add('hidden');
+        document.getElementById('train-step2').classList.add('hidden');
+        document.getElementById('train-step3').classList.remove('hidden');
+        try {
+            const res = await api('/api/train', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            if (res.error) {
+                alert('Eğitim hatası: ' + res.error);
+                document.getElementById('train-step2').classList.remove('hidden');
+                document.getElementById('train-step3').classList.add('hidden');
+                return;
+            }
+            pollTrainingStatus(res.job_id);
+        } catch (err) {
+            alert('Eğitim hatası: ' + err.message);
+            document.getElementById('train-step2').classList.remove('hidden');
+            document.getElementById('train-step3').classList.add('hidden');
+        }
+    }
+
+    async function pollTrainingStatus(jobId) {
+        let progress = 10;
+        const progressEl = document.getElementById('train-progress');
+        const statusEl = document.getElementById('train-status-text');
+        const poll = async () => {
+            try {
+                const res = await api(`/api/training/${jobId}/status`);
+                if (res.status === 'done') {
+                    if (progressEl) progressEl.style.width = '100%';
+                    if (statusEl) statusEl.textContent = 'Eğitim tamamlandı!';
+                    setTimeout(() => navigate(`/model/${res.model_id}/results`), 800);
+                    return;
+                }
+                if (res.status === 'error') {
+                    const step3 = document.getElementById('train-step3');
+                    if (step3) {
+                        const errMsg = res.error || 'Bilinmeyen hata';
+                        const isTorchCVE = errMsg.includes('CVE-2025') || errMsg.includes('upgrade torch');
+                        step3.innerHTML = `
+                            <div class="card p-10 text-center">
+                                <div class="mx-auto mb-4 w-14 h-14 rounded-full bg-red-100 flex items-center justify-center">
+                                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#EF4444" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                                </div>
+                                <h3 class="font-bold text-xl text-red-700 mb-2">Eğitim Başarısız Oldu</h3>
+                                <div class="bg-red-50 border border-red-200 rounded-lg p-4 mb-5 text-left max-w-lg mx-auto">
+                                    <p class="text-red-700 text-sm break-words">${esc(errMsg.length > 300 ? errMsg.substring(0, 300) + '…' : errMsg)}</p>
+                                    ${isTorchCVE ? '<p class="text-red-600 text-xs mt-2 font-semibold">Çözüm: PyTorch sürümünü güncelleyin: pip install torch>=2.6.0</p>' : ''}
+                                </div>
+                                <button class="btn-primary" onclick="navigate('/train')">Tekrar Dene</button>
+                            </div>`;
+                    }
+                    return;
+                }
+                progress = Math.min(progress + Math.random() * 8, 90);
+                if (progressEl) progressEl.style.width = progress + '%';
+                const messages = ['Veriler temizleniyor...', 'XGBoost eğitiliyor...', 'LightGBM eğitiliyor...', 'Sinir ağları eğitiliyor...', 'Modeller değerlendiriliyor...', 'Metrikler hesaplanıyor...'];
+                if (statusEl) statusEl.textContent = messages[Math.floor(Math.random() * messages.length)];
+                setTimeout(poll, 2000);
+            } catch { setTimeout(poll, 3000); }
+        };
+        setTimeout(poll, 2000);
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  CALL ANALYSIS (LLM-AS-A-JUDGE) FUNCTIONS
+    // ══════════════════════════════════════════════════════════
+    let audioFiles = [];      // File objects from drag-drop
+    let schemaRowCount = 0;
+
+    function switchTrainMode(mode) {
+        const mlPath = document.getElementById('ml-training-path');
+        const audioPath = document.getElementById('audio-training-path');
+        const btnMl = document.getElementById('mode-btn-ml');
+        const btnAudio = document.getElementById('mode-btn-audio');
+        if (mode === 'audio') {
+            mlPath.classList.add('hidden');
+            audioPath.classList.remove('hidden');
+            btnMl.className = 'flex-1 py-3 px-4 rounded-xl text-sm font-semibold transition-all bg-slate-50 border-2 border-slate-200 text-slate-500';
+            btnAudio.className = 'flex-1 py-3 px-4 rounded-xl text-sm font-semibold transition-all bg-purple-50 border-2 border-purple-400 text-purple-700';
+        } else {
+            mlPath.classList.remove('hidden');
+            audioPath.classList.add('hidden');
+            btnMl.className = 'flex-1 py-3 px-4 rounded-xl text-sm font-semibold transition-all bg-brand-50 border-2 border-brand-400 text-brand-700';
+            btnAudio.className = 'flex-1 py-3 px-4 rounded-xl text-sm font-semibold transition-all bg-slate-50 border-2 border-slate-200 text-slate-500';
+        }
+    }
+
+    function addSchemaRow() {
+        schemaRowCount++;
+        const container = document.getElementById('schema-rows');
+        const row = document.createElement('div');
+        row.className = 'flex gap-3 items-center mb-2';
+        row.id = `schema-row-${schemaRowCount}`;
+        row.innerHTML = `
+            <input class="input-field flex-1" placeholder="Değişken adı (ör: isCustomerHappy)" data-schema="name" style="font-family: 'JetBrains Mono', monospace; font-size: 13px;">
+            <select class="input-field" data-schema="type" style="width: 180px;">
+                <option value="classification">Sınıflandırma</option>
+                <option value="regression">Sayısal (Regresyon)</option>
+            </select>
+            <button class="btn-danger-sm" onclick="this.parentElement.remove(); renderAudioGroundTruth();" title="Sil">✕</button>
+        `;
+        row.querySelectorAll('input, select').forEach(el => {
+            el.addEventListener('change', () => renderAudioGroundTruth());
+        });
+        container.appendChild(row);
+    }
+
+    function getSchema() {
+        const rows = document.querySelectorAll('#schema-rows > div');
+        const schema = [];
+        rows.forEach(row => {
+            const name = row.querySelector('[data-schema="name"]').value.trim();
+            const type = row.querySelector('[data-schema="type"]').value;
+            if (name) schema.push({ name, type });
+        });
+        return schema;
+    }
+
+    function handleAudioDrop(e) {
+        e.preventDefault();
+        e.currentTarget.classList.remove('dragover');
+        const files = Array.from(e.dataTransfer.files).filter(f =>
+            /\.(wav|mp3|m4a|ogg|flac)$/i.test(f.name)
+        );
+        addAudioFiles(files);
+    }
+
+    function handleAudioFileSelect(input) {
+        const files = Array.from(input.files);
+        addAudioFiles(files);
+        input.value = '';
+    }
+
+    function addAudioFiles(files) {
+        files.forEach(f => {
+            if (!audioFiles.some(af => af.name === f.name)) {
+                audioFiles.push(f);
+            }
+        });
+        renderAudioFilesList();
+    }
+
+    function removeAudioFile(idx) {
+        audioFiles.splice(idx, 1);
+        renderAudioFilesList();
+    }
+
+    function renderAudioFilesList() {
+        const container = document.getElementById('audio-files-list');
+        if (!audioFiles.length) {
+            container.innerHTML = '';
+            return;
+        }
+        const schema = getSchema();
+        let html = `<div class="text-xs text-slate-500 mb-2 font-semibold uppercase tracking-wider">${audioFiles.length} dosya yüklendi</div>`;
+        html += '<div class="space-y-3">';
+        audioFiles.forEach((f, idx) => {
+            const url = URL.createObjectURL(f);
+            const sizeMB = (f.size / 1024 / 1024).toFixed(1);
+            html += `<div class="border border-slate-200 rounded-xl p-4 bg-slate-25">
+                <div class="flex items-center gap-3 mb-3">
+                    <div class="flex-1">
+                        <div class="text-sm font-semibold text-slate-800 flex items-center gap-2">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+                            ${esc(f.name)}
+                        </div>
+                        <div class="text-xs text-slate-400">${sizeMB} MB</div>
+                    </div>
+                    <audio controls src="${url}" preload="metadata" style="height: 32px; max-width: 260px;"></audio>
+                    <button class="btn-danger-sm" onclick="removeAudioFile(${idx})" title="Sil">✕</button>
+                </div>`;
+
+            if (schema.length > 0) {
+                html += '<div class="grid gap-2" style="grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));">';
+                schema.forEach(v => {
+                    const inputType = v.type === 'regression' ? 'number' : 'text';
+                    html += `<div>
+                        <label class="block text-xs font-medium text-slate-500 mb-1">${esc(v.name)} <span class="tag ${v.type === 'classification' ? 'tag-green' : 'tag-orange'}" style="font-size:10px;">${v.type === 'classification' ? 'Sınıf.' : 'Sayısal'}</span></label>
+                        <input class="input-field text-sm" type="${inputType}" placeholder="Gerçek değer" data-actual-file="${esc(f.name)}" data-actual-var="${esc(v.name)}" ${inputType === 'number' ? 'step="any"' : ''}>
+                    </div>`;
+                });
+                html += '</div>';
+            }
+            html += '</div>';
+        });
+        html += '</div>';
+        container.innerHTML = html;
+    }
+
+    function renderAudioGroundTruth() {
+        // Re-render file list to update ground truth inputs when schema changes
+        renderAudioFilesList();
+    }
+
+    function collectActuals() {
+        const actuals = {};
+        document.querySelectorAll('[data-actual-file]').forEach(el => {
+            const fname = el.getAttribute('data-actual-file');
+            const vname = el.getAttribute('data-actual-var');
+            const val = el.value.trim();
+            if (val) {
+                if (!actuals[fname]) actuals[fname] = {};
+                actuals[fname][vname] = val;
+            }
+        });
+        return actuals;
+    }
+
+    async function startAudioEvaluation() {
+        const schema = getSchema();
+        if (!schema.length) return alert('En az bir değişken tanımlamalısınız.');
+        const prompt = document.getElementById('audio-prompt').value.trim();
+        if (!prompt) return alert('Değerlendirme prompt\'u gerekli.');
+        if (!audioFiles.length) return alert('En az bir ses dosyası yüklemelisiniz.');
+
+        const modelName = document.getElementById('audio-model-name').value.trim() || `Ses Analizi ${new Date().toLocaleString('tr-TR')}`;
+        const language = document.getElementById('audio-language').value;
+        const visibility = document.getElementById('audio-visibility').value;
+        const actuals = collectActuals();
+
+        // Build FormData
+        const fd = new FormData();
+        fd.append('model_name', modelName);
+        fd.append('schema', JSON.stringify(schema));
+        fd.append('prompt', prompt);
+        fd.append('language', language);
+        fd.append('visibility', visibility);
+        fd.append('actuals', JSON.stringify(actuals));
+        audioFiles.forEach(f => fd.append('audio_files', f, f.name));
+
+        // Show progress
+        document.getElementById('start-audio-eval-btn').classList.add('hidden');
+        document.getElementById('audio-eval-progress').classList.remove('hidden');
+
+        try {
+            const res = await fetch(API + '/api/audio-evaluate', {
+                method: 'POST', body: fd,
+                headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {},
+            });
+            const data = await res.json();
+            if (data.error) {
+                alert('Hata: ' + data.error);
+                document.getElementById('start-audio-eval-btn').classList.remove('hidden');
+                document.getElementById('audio-eval-progress').classList.add('hidden');
+                return;
+            }
+            pollAudioEvalStatus(data.job_id);
+        } catch (err) {
+            alert('Hata: ' + err.message);
+            document.getElementById('start-audio-eval-btn').classList.remove('hidden');
+            document.getElementById('audio-eval-progress').classList.add('hidden');
+        }
+    }
+
+    async function pollAudioEvalStatus(jobId) {
+        const barEl = document.getElementById('audio-eval-bar');
+        const statusEl = document.getElementById('audio-eval-status-text');
+        const poll = async () => {
+            try {
+                const res = await api(`/api/audio-evaluate/${jobId}/status`);
+                if (res.status === 'done') {
+                    if (barEl) barEl.style.width = '100%';
+                    if (statusEl) statusEl.textContent = 'Değerlendirme tamamlandı!';
+                    setTimeout(() => navigate(`/model/${res.model_id}/results`), 800);
+                    return;
+                }
+                if (res.status === 'error') {
+                    if (statusEl) statusEl.textContent = 'Hata: ' + (res.error || 'Bilinmeyen');
+                    if (barEl) barEl.style.background = '#EF4444';
+                    return;
+                }
+                const total = res.total || 1;
+                const processed = res.processed || 0;
+                const pct = Math.max(5, Math.round((processed / total) * 100));
+                if (barEl) barEl.style.width = pct + '%';
+                const msgs = ['Ses dosyası transkript ediliyor...', 'Whisper ile çözümleme yapılıyor...', 'LLM analizi çalıştırılıyor...', 'Yanıtlar değerlendiriliyor...'];
+                if (statusEl) statusEl.textContent = `${processed}/${total} dosya işlendi — ${msgs[Math.floor(Math.random() * msgs.length)]}`;
+                setTimeout(poll, 2500);
+            } catch { setTimeout(poll, 3000); }
+        };
+        setTimeout(poll, 2000);
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  MODEL RESULTS
+    // ══════════════════════════════════════════════════════════
+
+    function renderCallAnalysisResults(model) {
+        const ca = model.call_analysis || {};
+        const metrics = ca.metrics || {};
+        const rows = ca.row_results || [];
+        const schema = ca.schema || [];
+        const isOwnerOrAdmin = model.owner === currentUser.username || isAdmin();
+
+        let metricsHtml = '';
+        for (const [varName, m] of Object.entries(metrics)) {
+            if (m.type === 'classification') {
+                metricsHtml += `<div class="stat-card">
+                    <div class="text-slate-500 text-xs font-medium mb-1">${esc(varName)} <span class="tag tag-green" style="font-size:10px;">Sınıf.</span></div>
+                    <div class="text-3xl font-bold ${m.accuracy >= 80 ? 'text-brand-600' : m.accuracy >= 60 ? 'text-warn-500' : 'text-danger-500'}">%${m.accuracy}</div>
+                    <div class="text-xs text-slate-400">${m.correct}/${m.n} doğru</div>
+                </div>`;
+            } else {
+                metricsHtml += `<div class="stat-card">
+                    <div class="text-slate-500 text-xs font-medium mb-1">${esc(varName)} <span class="tag tag-orange" style="font-size:10px;">Sayısal</span></div>
+                    <div class="text-2xl font-bold text-slate-800">MAE: ${m.mae !== undefined ? m.mae : '\u2014'}</div>
+                    <div class="text-xs text-slate-400">RMSE: ${m.rmse !== undefined ? m.rmse : '\u2014'} \xb7 n=${m.n}</div>
+                </div>`;
+            }
+        }
+
+        const metricCount = Math.min(Object.keys(metrics).length + 1, 4);
+
+        let rowsHtml = '';
+        rows.forEach((r, i) => {
+            const statusIcon = r.error ? '\u274c' : '\u2705';
+            let cellsHtml = '';
+            schema.forEach(v => {
+                const actual = (r.actuals || {})[v.name] != null ? (r.actuals || {})[v.name] : '\u2014';
+                const pred = (r.predicted || {})[v.name] != null ? (r.predicted || {})[v.name] : '\u2014';
+                const match = v.type === 'classification'
+                    ? String(actual).toLowerCase().trim() === String(pred).toLowerCase().trim()
+                    : false;
+                cellsHtml += '<td class="text-xs font-mono">' + esc(actual) + '</td>';
+                cellsHtml += '<td class="text-xs font-mono ' + (match ? 'text-brand-600 font-bold' : '') + '">' + esc(pred) + '</td>';
+            });
+            const reasoning = esc(r.summary_reasoning || r.error || '\u2014');
+            const reasoningDisplay = r.summary_reasoning ? esc(r.summary_reasoning) : (r.error ? '<span class=text-danger-500>' + esc(r.error) + '</span>' : '\u2014');
+            rowsHtml += '<tr><td class="text-sm">' + statusIcon + ' ' + esc(r.filename) + '</td>' + cellsHtml + '<td class="text-xs text-slate-500 max-w-xs truncate" title="' + reasoning + '">' + reasoningDisplay + '</td></tr>';
+        });
+
+        let schemaHeaders = '';
+        schema.forEach(v => {
+            schemaHeaders += '<th>' + esc(v.name) + ' (Ger\u00e7ek)</th><th>' + esc(v.name) + ' (LLM)</th>';
+        });
+
+        const promptSafe = esc(ca.prompt || '');
+        const transcriptItems = rows.map((r, i) => {
+            const tSafe = esc(r.transcript || 'Transkript mevcut değil');
+            return '<details class="border border-slate-200 rounded-lg"><summary class="px-4 py-2 cursor-pointer text-sm font-medium text-slate-700 hover:bg-slate-50">' + esc(r.filename) + '</summary><div class="px-4 py-3 text-xs text-slate-600 bg-slate-25 border-t border-slate-100 whitespace-pre-wrap max-h-48 overflow-y-auto">' + tSafe + '</div></details>';
+        }).join('');
+
+        app().innerHTML = `
+        <div class="fade-in">
+            <div class="text-sm text-slate-400 mb-4 flex items-center gap-1.5">
+                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/')">Ana Sayfa</span><span>\u203a</span>
+                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/library')">K\u00fct\u00fcphane</span><span>\u203a</span>
+                <span class="text-slate-600">${esc(model.name)}</span>
+            </div>
+
+            <div class="card p-6 mb-6" style="background: linear-gradient(135deg, #FAF5FF, #fff); border-color: #C4B5FD;">
+                <div class="flex items-start gap-4">
+                    <div class="w-14 h-14 rounded-xl flex items-center justify-center flex-shrink-0" style="background:#EDE9FE;">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                    </div>
+                    <div class="flex-1">
+                        <div class="flex items-center gap-2 mb-1">
+                            <h1 class="text-2xl font-bold text-slate-900">${esc(model.name)}</h1>
+                            <span class="tag tag-purple">\u00c7a\u011fr\u0131 Analizi</span>
+                            <span class="tag ${model.visibility === 'private' ? 'tag-red' : 'tag-green'}">${model.visibility === 'private' ? '\u00d6zel' : 'Herkese A\u00e7\u0131k'}</span>
+                        </div>
+                        <p class="text-slate-500 text-sm">
+                            LLM-as-a-Judge \xb7 ${rows.length} ses dosyas\u0131 \xb7 ${schema.length} de\u011fi\u015fken \xb7 Whisper: ${esc(ca.whisper_model || '?')}
+                        </p>
+                        <p class="text-slate-400 text-xs mt-1">Olu\u015fturan: ${esc(model.owner || '\u2014')} \xb7 ${model.created_at ? new Date(model.created_at).toLocaleString('tr-TR') : ''}</p>
+                    </div>
+                    <div class="flex gap-2 flex-shrink-0">
+                        <button class="btn-primary btn-sm flex items-center gap-1.5" onclick="navigate('/model/${model.id}/predict-audio')">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                            Modeli Çalıştır
+                        </button>
+                        <button class="btn-secondary btn-sm flex items-center gap-1.5" onclick="downloadCallAnalysisCSV('${model.id}')">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                            Sonuçları CSV İndir
+                        </button>
+                        ${isOwnerOrAdmin ? `<button class="btn-danger-sm" onclick="deleteModel('${model.id}', '${escAttr(model.name)}')">Sil</button>` : ''}
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-${metricCount} gap-4 mb-6">
+                ${ca.overall_accuracy != null ? '<div class="featured-card" style="background: linear-gradient(135deg, #FAF5FF, #fff); border-color: #C4B5FD;"><div class="text-slate-500 text-xs font-medium mb-1">Genel Do\u011fruluk</div><div class="text-3xl font-bold '+(ca.overall_accuracy >= 80 ? 'text-brand-600' : ca.overall_accuracy >= 60 ? 'text-warn-500' : 'text-danger-500')+'">%'+ca.overall_accuracy+'</div></div>' : ''}
+                ${ca.overall_mae != null ? '<div class="featured-card" style="background: linear-gradient(135deg, #FFF7ED, #fff); border-color: #FED7AA;"><div class="text-slate-500 text-xs font-medium mb-1">Genel MAE</div><div class="text-3xl font-bold text-warn-600">'+ca.overall_mae+'</div></div>' : ''}
+                ${metricsHtml}
+            </div>
+
+            <div class="card p-5 mb-6">
+                <h3 class="font-semibold text-slate-800 mb-2 text-sm">Kullan\u0131lan De\u011ferlendirme Prompt'u</h3>
+                <pre class="text-xs bg-slate-50 p-4 rounded-lg text-slate-600 whitespace-pre-wrap border border-slate-200 max-h-40 overflow-y-auto">${promptSafe}</pre>
+                <div class="text-xs text-slate-400 mt-2">Dil: ${esc(ca.language || '?')} \xb7 LLM: ${esc(ca.llm_endpoint || '?')}</div>
+            </div>
+
+            <div class="card-flat p-5 mb-6 overflow-x-auto">
+                <h3 class="font-semibold text-slate-800 mb-4">Dosya Baz\u0131nda Sonu\u00e7lar</h3>
+                <table class="data-table">
+                    <thead><tr>
+                        <th>Dosya</th>
+                        ${schemaHeaders}
+                        <th>LLM A\u00e7\u0131klamas\u0131</th>
+                    </tr></thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+            </div>
+
+            <div class="card-flat p-5 mb-6">
+                <h3 class="font-semibold text-slate-800 mb-4">Transkriptler</h3>
+                <div class="space-y-2">${transcriptItems}</div>
+            </div>
+
+            <div class="card p-5 mb-4">
+                <div class="flex items-center justify-between">
+                    <h3 class="font-semibold text-slate-800 text-sm flex items-center gap-2">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                        Açıklanabilirlik Analizi
+                    </h3>
+                    <button class="btn-primary btn-sm" id="run-ca-explain-btn" onclick="loadExplainability('${model.id}', 'LLM-as-a-Judge')">Analizi Başlat</button>
+                </div>
+            </div>
+            <div id="ca-explain-result"></div>
+        </div>`;
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  AUDIO PREDICT — Run a saved call_analysis model
+    // ══════════════════════════════════════════════════════════
+
+    let predictAudioFiles = [];
+
+    async function renderAudioPredict(modelId) {
+        app().innerHTML = `<div class="flex items-center justify-center py-20"><div class="spinner"></div></div>`;
+        const model = await api(`/api/models/${modelId}`);
+        if (model.error || model.task_type !== 'call_analysis') return renderNotFound();
+
+        const ca = model.call_analysis || {};
+        const schema = ca.schema || [];
+        const promptSafe = esc(ca.prompt || '');
+        predictAudioFiles = [];
+
+        let schemaHtml = schema.map(v =>
+            `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium ${v.type === 'classification' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}">${esc(v.name)} <span class="opacity-60">${v.type === 'classification' ? 'Sınıf.' : 'Sayısal'}</span></span>`
+        ).join(' ');
+
+        app().innerHTML = `
+        <div class="fade-in">
+            <div class="text-sm text-slate-400 mb-4 flex items-center gap-1.5">
+                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/')">Ana Sayfa</span><span>›</span>
+                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/library')">Kütüphane</span><span>›</span>
+                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/model/${modelId}/results')">${esc(model.name)}</span><span>›</span>
+                <span class="text-slate-600">Tahmin</span>
+            </div>
+
+            <div class="card p-6 mb-6" style="background: linear-gradient(135deg, #FAF5FF, #fff); border-color: #C4B5FD;">
+                <div class="flex items-start gap-4">
+                    <div class="w-14 h-14 rounded-xl flex items-center justify-center flex-shrink-0" style="background:#EDE9FE;">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    </div>
+                    <div class="flex-1">
+                        <div class="flex items-center gap-2 mb-1">
+                            <h1 class="text-2xl font-bold text-slate-900">${esc(model.name)}</h1>
+                            <span class="tag tag-purple">Tahmin</span>
+                        </div>
+                        <p class="text-slate-500 text-sm">
+                            Yeni ses dosyaları yükleyerek bu modelin kayıtlı prompt ve değişkenleriyle tahmin yapın. Sonuçlar CSV olarak indirilir.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card p-5 mb-6">
+                <h3 class="font-semibold text-slate-800 mb-3 text-sm">Sabit Model Yapılandırması</h3>
+                <div class="mb-3">
+                    <div class="text-xs font-medium text-slate-500 mb-1.5">Değişkenler</div>
+                    <div class="flex flex-wrap gap-2">${schemaHtml}</div>
+                </div>
+                <div class="mb-3">
+                    <div class="text-xs font-medium text-slate-500 mb-1.5">Dil</div>
+                    <span class="text-sm text-slate-700 font-medium">${esc(ca.language || 'turkish')}</span>
+                </div>
+                <div>
+                    <div class="text-xs font-medium text-slate-500 mb-1.5">Değerlendirme Prompt'u</div>
+                    <pre class="text-xs bg-slate-50 p-3 rounded-lg text-slate-600 whitespace-pre-wrap border border-slate-200 max-h-32 overflow-y-auto">${promptSafe}</pre>
+                </div>
+            </div>
+
+            <div class="card p-6 mb-6">
+                <h3 class="font-semibold text-slate-800 mb-4 flex items-center gap-2">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+                    Ses Dosyalarını Yükle
+                </h3>
+                <div class="upload-zone mb-4" id="predict-audio-upload-zone"
+                     onclick="document.getElementById('predict-audio-files-input').click()"
+                     ondragover="event.preventDefault(); this.classList.add('dragover')"
+                     ondragleave="this.classList.remove('dragover')"
+                     ondrop="handlePredictAudioDrop(event)">
+                    <svg class="mx-auto mb-3" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="1.5">
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>
+                    </svg>
+                    <p class="text-slate-600 font-medium">Ses dosyalarını buraya sürükleyin veya tıklayarak seçin</p>
+                    <p class="text-slate-400 text-sm mt-1">.wav, .mp3, .m4a, .ogg, .flac dosyaları desteklenir</p>
+                </div>
+                <input type="file" id="predict-audio-files-input" accept=".wav,.mp3,.m4a,.ogg,.flac" multiple class="hidden" onchange="handlePredictAudioFileSelect(this)">
+                <div id="predict-audio-files-list"></div>
+            </div>
+
+            <button class="btn-primary w-full text-center flex items-center justify-center gap-2 py-3 mb-6" id="start-audio-predict-btn" onclick="startAudioPrediction('${modelId}')">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                Tahmini Başlat
+            </button>
+
+            <div id="audio-predict-progress" class="hidden">
+                <div class="card p-10 text-center">
+                    <div class="spinner mx-auto mb-5"></div>
+                    <h3 class="font-bold text-xl text-slate-800 mb-2">Ses Tahmini Devam Ediyor...</h3>
+                    <p class="text-slate-500 text-sm mb-2">Transkripsiyon + LLM Analizi yapılıyor</p>
+                    <div class="progress-bar w-72 mx-auto">
+                        <div class="progress-bar-fill" id="audio-predict-bar" style="width: 5%"></div>
+                    </div>
+                    <p class="text-slate-400 text-xs mt-3" id="audio-predict-status-text">Dosyalar işleniyor...</p>
+                </div>
+            </div>
+
+            <div id="audio-predict-results" class="hidden"></div>
+        </div>`;
+    }
+
+    function handlePredictAudioDrop(e) {
+        e.preventDefault();
+        e.currentTarget.classList.remove('dragover');
+        const files = Array.from(e.dataTransfer.files).filter(f =>
+            /\.(wav|mp3|m4a|ogg|flac)$/i.test(f.name)
+        );
+        addPredictAudioFiles(files);
+    }
+
+    function handlePredictAudioFileSelect(input) {
+        const files = Array.from(input.files);
+        addPredictAudioFiles(files);
+        input.value = '';
+    }
+
+    function addPredictAudioFiles(files) {
+        files.forEach(f => {
+            if (!predictAudioFiles.some(af => af.name === f.name)) {
+                predictAudioFiles.push(f);
+            }
+        });
+        renderPredictAudioFilesList();
+    }
+
+    function removePredictAudioFile(idx) {
+        predictAudioFiles.splice(idx, 1);
+        renderPredictAudioFilesList();
+    }
+
+    function renderPredictAudioFilesList() {
+        const container = document.getElementById('predict-audio-files-list');
+        if (!predictAudioFiles.length) { container.innerHTML = ''; return; }
+        let html = `<div class="text-xs text-slate-500 mb-2 font-semibold uppercase tracking-wider">${predictAudioFiles.length} dosya yüklendi</div><div class="space-y-2">`;
+        predictAudioFiles.forEach((f, idx) => {
+            const url = URL.createObjectURL(f);
+            const sizeMB = (f.size / 1024 / 1024).toFixed(1);
+            html += `<div class="flex items-center gap-3 border border-slate-200 rounded-lg p-3 bg-slate-25">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+                <div class="flex-1"><span class="text-sm font-medium text-slate-800">${esc(f.name)}</span> <span class="text-xs text-slate-400">${sizeMB} MB</span></div>
+                <audio controls src="${url}" preload="metadata" style="height: 28px; max-width: 220px;"></audio>
+                <button class="btn-danger-sm text-xs" onclick="removePredictAudioFile(${idx})">✕</button>
+            </div>`;
+        });
+        html += '</div>';
+        container.innerHTML = html;
+    }
+
+    async function startAudioPrediction(modelId) {
+        if (!predictAudioFiles.length) return alert('En az bir ses dosyası yüklemelisiniz.');
+
+        const fd = new FormData();
+        predictAudioFiles.forEach(f => fd.append('audio_files', f, f.name));
+
+        document.getElementById('start-audio-predict-btn').classList.add('hidden');
+        document.getElementById('audio-predict-progress').classList.remove('hidden');
+        document.getElementById('audio-predict-results').classList.add('hidden');
+
+        try {
+            const res = await fetch(API + `/api/models/${modelId}/predict-audio`, {
+                method: 'POST', body: fd,
+                headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {},
+            });
+            const data = await res.json();
+            if (data.error) {
+                alert('Hata: ' + data.error);
+                document.getElementById('start-audio-predict-btn').classList.remove('hidden');
+                document.getElementById('audio-predict-progress').classList.add('hidden');
+                return;
+            }
+            pollAudioPredictStatus(data.job_id, modelId);
+        } catch (err) {
+            alert('Hata: ' + err.message);
+            document.getElementById('start-audio-predict-btn').classList.remove('hidden');
+            document.getElementById('audio-predict-progress').classList.add('hidden');
+        }
+    }
+
+    async function pollAudioPredictStatus(jobId, modelId) {
+        const barEl = document.getElementById('audio-predict-bar');
+        const statusEl = document.getElementById('audio-predict-status-text');
+
+        const poll = async () => {
+            try {
+                const res = await api(`/api/audio-predict/${jobId}/status`);
+                if (res.status === 'done') {
+                    if (barEl) barEl.style.width = '100%';
+                    if (statusEl) statusEl.textContent = 'Tahmin tamamlandı!';
+                    setTimeout(() => showAudioPredictResults(jobId, res.row_results || [], modelId), 600);
+                    return;
+                }
+                if (res.status === 'error') {
+                    if (statusEl) statusEl.textContent = 'Hata: ' + (res.error || 'Bilinmeyen');
+                    if (barEl) barEl.style.background = '#EF4444';
+                    document.getElementById('start-audio-predict-btn').classList.remove('hidden');
+                    return;
+                }
+                const total = res.total || 1;
+                const processed = res.processed || 0;
+                const pct = Math.max(5, Math.round((processed / total) * 100));
+                if (barEl) barEl.style.width = pct + '%';
+                const msgs = ['Ses dosyası transkript ediliyor...', 'Whisper ile çözümleme yapılıyor...', 'LLM analizi çalıştırılıyor...', 'Yanıtlar değerlendiriliyor...'];
+                if (statusEl) statusEl.textContent = `${processed}/${total} dosya işlendi — ${msgs[Math.floor(Math.random() * msgs.length)]}`;
+                setTimeout(poll, 2500);
+            } catch { setTimeout(poll, 3000); }
+        };
+        setTimeout(poll, 2000);
+    }
+
+    function showAudioPredictResults(jobId, rowResults, modelId) {
+        document.getElementById('audio-predict-progress').classList.add('hidden');
+        const resultsDiv = document.getElementById('audio-predict-results');
+        resultsDiv.classList.remove('hidden');
+
+        // Build a preview table
+        let headers = '<th>Dosya</th>';
+        let varNames = [];
+        if (rowResults.length > 0) {
+            const pred = rowResults[0].predicted || {};
+            varNames = Object.keys(pred);
+            varNames.forEach(vn => { headers += `<th>${esc(vn)}</th>`; });
+        }
+        headers += '<th>LLM Açıklaması</th>';
+
+        let tbody = '';
+        rowResults.forEach(r => {
+            const statusIcon = r.error ? '❌' : '✅';
+            let cells = `<td class="text-sm">${statusIcon} ${esc(r.filename)}</td>`;
+            varNames.forEach(vn => {
+                cells += `<td class="text-xs font-mono">${(r.predicted || {})[vn] != null ? esc((r.predicted || {})[vn]) : '—'}</td>`;
+            });
+            const explanation = r.summary_reasoning || r.error || '—';
+            const explanationSafe = esc(explanation);
+            cells += `<td class="text-xs text-slate-500 max-w-xs truncate" title="${explanationSafe}">${explanationSafe}</td>`;
+            tbody += `<tr>${cells}</tr>`;
+        });
+
+        resultsDiv.innerHTML = `
+            <div class="card p-6 mb-6" style="background: linear-gradient(135deg, #ECFDF5, #fff); border-color: #A7F3D0;">
+                <div class="flex items-center gap-3 mb-4">
+                    <div class="w-10 h-10 rounded-xl flex items-center justify-center bg-brand-100">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-lg text-slate-900">Tahmin Tamamlandı</h3>
+                        <p class="text-slate-500 text-sm">${rowResults.length} ses dosyası başarıyla işlendi.</p>
+                    </div>
+                    <div class="ml-auto">
+                        <a href="${API}/api/audio-predict/${jobId}/download-csv" class="btn-primary flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold no-underline" target="_blank"
+                           ${authToken ? `onclick="event.preventDefault(); downloadAudioPredictCSV('${jobId}')"` : ''}>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                            CSV İndir
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card-flat p-5 mb-6 overflow-x-auto">
+                <h3 class="font-semibold text-slate-800 mb-4">Sonuç Önizlemesi</h3>
+                <table class="data-table">
+                    <thead><tr>${headers}</tr></thead>
+                    <tbody>${tbody}</tbody>
+                </table>
+            </div>
+
+            <div class="flex gap-3">
+                <button class="btn-secondary flex items-center gap-2" onclick="document.getElementById('audio-predict-results').classList.add('hidden'); document.getElementById('start-audio-predict-btn').classList.remove('hidden'); predictAudioFiles = []; renderPredictAudioFilesList();">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                    Yeni Tahmin Yap
+                </button>
+                <button class="btn-secondary" onclick="navigate('/model/${modelId}/results')">Modele Dön</button>
+            </div>
+        `;
+    }
+
+    async function downloadAudioPredictCSV(jobId) {
+        try {
+            const res = await fetch(API + `/api/audio-predict/${jobId}/download-csv`, {
+                headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {},
+            });
+            if (!res.ok) { alert('İndirme hatası'); return; }
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            const disposition = res.headers.get('Content-Disposition') || '';
+            const match = disposition.match(/filename="([^"]+)"/);
+            a.download = match ? match[1] : `tahminler_ses_${jobId.substring(0,8)}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            alert('İndirme hatası: ' + err.message);
+        }
+    }
+
+    async function renderResults(modelId) {
+        app().innerHTML = `<div class="flex items-center justify-center py-20"><div class="spinner"></div></div>`;
+        const model = await api(`/api/models/${modelId}`);
+        if (model.error) return renderNotFound();
+
+        // ── Call Analysis has its own results view ──
+        if (model.task_type === 'call_analysis') return renderCallAnalysisResults(model);
+
+        const submodels = model.submodels || [];
+        const isOwnerOrAdmin = model.owner === currentUser.username || isAdmin();
+
+        app().innerHTML = `
+        <div class="fade-in">
+            <div class="text-sm text-slate-400 mb-4 flex items-center gap-1.5">
+                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/')">Ana Sayfa</span><span>›</span>
+                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/library')">Kütüphane</span><span>›</span>
+                <span class="text-slate-600">${esc(model.name)}</span>
+            </div>
+
+            <div class="card p-6 mb-6" style="background: linear-gradient(135deg, #ECFDF5, #fff); border-color: #A7F3D0;">
+                <div class="flex items-start gap-4">
+                    <div class="w-14 h-14 rounded-xl flex items-center justify-center flex-shrink-0 bg-brand-100">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                    </div>
+                    <div class="flex-1">
+                        <div class="flex items-center gap-2 mb-1">
+                            <h1 class="text-2xl font-bold text-slate-900">${esc(model.name)}</h1>
+                            ${model.endorsed ? '<span class="endorsed-badge">Onaylı</span>' : ''}
+                            <span class="tag ${model.visibility === 'private' ? 'tag-red' : 'tag-green'}">${model.visibility === 'private' ? 'Özel' : 'Herkese Açık'}</span>
+                        </div>
+                        <p class="text-slate-500 text-sm">
+                            ${model.task_type === 'classification' ? 'Sınıflandırma' : model.task_type === 'timeseries' ? 'Zaman Serisi Tahmini' : model.task_type === 'text' ? 'Sınıflandırma' : model.task_type === 'call_analysis' ? 'Çağrı Analizi' : 'Regresyon'} · Hedef: <span class="font-mono text-slate-700">${esc(model.target_column)}</span> ·
+                            ${model.num_rows} satır · ${submodels.length} alt model
+                        </p>
+                        <p class="text-slate-400 text-xs mt-1">
+                            <strong class="text-slate-600">${model.num_test_rows || '?'} satırlık test seti</strong> üzerinde değerlendirildi
+                            · ${model.num_train_rows || '?'} satır ile eğitildi
+                            · Oluşturan: ${esc(model.owner || '—')}
+                        </p>
+                    </div>
+                    <div class="flex gap-2 flex-shrink-0">
+                        ${isOwnerOrAdmin ? `
+                            <select class="input-field text-xs py-1.5 px-3" style="width:auto;" onchange="setVisibility('${modelId}', this.value)">
+                                <option value="public" ${model.visibility !== 'private' ? 'selected' : ''}>Herkese Açık</option>
+                                <option value="private" ${model.visibility === 'private' ? 'selected' : ''}>Özel</option>
+                            </select>
+                        ` : ''}
+                        ${isAdmin() ? `
+                            <button class="btn-sm ${model.endorsed ? 'btn-danger-sm' : 'btn-export'}" onclick="toggleEndorse('${modelId}', ${!model.endorsed})">
+                                ${model.endorsed ? 'Onayı Kaldır' : 'Onayla'}
+                            </button>
+                        ` : ''}
+                        ${isOwnerOrAdmin ? `<button class="btn-danger-sm" onclick="deleteModel('${modelId}', '${escAttr(model.name)}')">Sil</button>` : ''}
+                    </div>
+                </div>
+            </div>
+
+            <div class="card p-6 mb-6">
+                <h3 class="font-semibold text-slate-800 mb-4">Alt Model Performansı — ${model.task_type === 'timeseries' ? 'MASE (düşük = iyi)' : 'Test Skoru'}</h3>
+                <div style="height: ${Math.max(300, submodels.length * 40)}px;"><canvas id="results-chart"></canvas></div>
+            </div>
+
+            <div class="card-flat overflow-hidden mb-6">
+                <div class="p-4 bg-slate-50 border-b border-slate-200">
+                    <p class="text-sm text-slate-600">${model.task_type === 'timeseries'
+                        ? 'MASE (Mean Absolute Scaled Error): 1.0\'den düşük = naif modelden iyi. Tahmin yapmak için bir alt modele tıklayın.'
+                        : 'Tahmin yapmak için bir alt modele tıklayın. Dışa aktarmak için sağdaki butonları kullanın.'}</p>
+                </div>
+                <table class="data-table">
+                    <thead><tr>
+                        <th>Alt Model</th>
+                        <th>${model.task_type === 'timeseries' ? 'MASE' : 'Test Skoru'}</th>
+                        <th>İç Skor</th>
+                        <th>CPU</th>
+                        <th>Günlük</th>
+                        ${model.task_type !== 'timeseries' ? '<th>Saatlik</th>' : ''}
+                        <th class="text-right">Dışa Aktar</th>
+                    </tr></thead>
+                    <tbody>
+                    ${submodels.map((sm, i) => {
+                        const isTS = model.task_type === 'timeseries';
+                        const overfit = isTS ? 0 : ((sm.score_internal || 0) - sm.score);
+                        const ofFlag = overfit > 0.05 ? '<span class="tag tag-red text-xs ml-1" title="İç skor test skorundan çok yüksek — aşırı öğrenme olabilir">⚠</span>' : '';
+                        return `
+                        <tr onclick="navigate('/model/${modelId}/predict/${encodeURIComponent(sm.name)}')">
+                            <td>
+                                <div class="flex items-center gap-2">
+                                    ${i === 0 ? '<span class="tag tag-green text-xs">En İyi</span>' : ''}
+                                    <span class="font-medium text-sm row-name transition-colors">${esc(sm.name)}</span>
+                                </div>
+                            </td>
+                            <td>
+                                <div class="${scoreColor(sm.score, model.task_type)} font-mono text-sm font-bold">${formatScore(sm.score, model.task_type)}</div>
+                                ${sm.ci_low != null ? '<div class="text-slate-400 font-mono" style="font-size:10px;">%' + (sm.ci_low * 100).toFixed(0) + '–' + (sm.ci_high * 100).toFixed(0) + ' GA</div>' : ''}
+                            </td>
+                            <td class="font-mono text-sm text-slate-500">${isTS ? sm.score_internal.toFixed(2) : '%' + ((sm.score_internal || 0) * 100).toFixed(1)}${ofFlag}</td>
+                            <td>${cpuTag(sm.cpu_category)}</td>
+                            <td>${airflowTag(sm.airflow_support)}</td>
+                            ${!isTS ? '<td>' + sqlTag(sm.sql_support) + '</td>' : ''}
+                            <td class="text-right" onclick="event.stopPropagation()">
+                                <button class="btn-export btn-sm" onclick="navigate('/model/${modelId}/export/${encodeURIComponent(sm.name)}')">Dışa Aktar</button>
+                            </td>
+                        </tr>`;
+                    }).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>`;
+
+        renderResultsChart(submodels, model.task_type);
+    }
+
+    function renderResultsChart(submodels, taskType) {
+        const ctx = document.getElementById('results-chart');
+        if (!ctx) return;
+        const isTS = taskType === 'timeseries';
+
+        // For timeseries (MASE, lower=better): sort ascending so best is on top visually
+        // For tabular (score, higher=better): sort descending
+        const sorted = [...submodels].sort((a, b) => isTS ? a.score - b.score : b.score - a.score);
+
+        const colors = sorted.map(s => {
+            if (isTS) {
+                // MASE coloring: lower is better
+                return s.score <= 0.5 ? 'rgba(16,185,129,0.8)' : s.score <= 1.0 ? 'rgba(5,150,105,0.7)' : s.score <= 2.0 ? 'rgba(249,115,22,0.7)' : 'rgba(239,68,68,0.7)';
+            }
+            return s.score >= 0.9 ? 'rgba(16,185,129,0.8)' : s.score >= 0.75 ? 'rgba(5,150,105,0.7)' : s.score >= 0.6 ? 'rgba(249,115,22,0.7)' : 'rgba(239,68,68,0.7)';
+        });
+
+        const chartData = isTS
+            ? sorted.map(s => s.score.toFixed(2))
+            : sorted.map(s => (s.score * 100).toFixed(1));
+
+        const maxVal = isTS
+            ? Math.ceil(Math.max(...sorted.map(s => s.score)) * 1.2)
+            : 100;
+
+        chartInstances['results'] = new Chart(ctx, {
+            type: 'bar',
+            data: { labels: sorted.map(s => s.name), datasets: [{ label: isTS ? 'MASE' : 'Test Skoru', data: chartData, backgroundColor: colors, borderRadius: 6, barThickness: 26 }] },
+            options: {
+                indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1E293B', titleColor: '#F8FAFC', bodyColor: '#CBD5E1', callbacks: { label: ctx => isTS ? `MASE: ${ctx.raw}` : `Test: ${ctx.raw}%` } } },
+                scales: {
+                    x: { min: 0, max: maxVal, grid: { color: '#F1F5F9' }, ticks: { color: '#64748B', callback: v => isTS ? v : '%' + v } },
+                    y: { grid: { display: false }, ticks: { color: '#475569', font: { family: 'JetBrains Mono', size: 11 } } }
+                }
+            }
+        });
+    }
+
+    async function setVisibility(modelId, visibility) {
+        await api(`/api/models/${modelId}/visibility`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ visibility }) });
+    }
+
+    async function toggleEndorse(modelId, endorse) {
+        const res = await api(`/api/models/${modelId}/endorse`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ endorsed: endorse }) });
+        if (res.success) renderResults(modelId);
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  SUBMODEL PREDICT
+    // ══════════════════════════════════════════════════════════
+    async function renderSubmodelPredict(modelId, submodelName) {
+        submodelName = decodeURIComponent(submodelName);
+        app().innerHTML = `<div class="flex items-center justify-center py-20"><div class="spinner"></div></div>`;
+        const model = await api(`/api/models/${modelId}`);
+        if (model.error) return renderNotFound();
+        const sm = model.submodels.find(s => s.name === submodelName);
+        const features = model.feature_columns || [];
+
+        app().innerHTML = `
+        <div class="fade-in max-w-4xl mx-auto">
+            <div class="text-sm text-slate-400 mb-4 flex items-center gap-1.5">
+                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/')">Ana Sayfa</span><span>›</span>
+                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/model/${modelId}/results')">${esc(model.name)}</span><span>›</span>
+                <span class="text-slate-600">${esc(submodelName)}</span>
+            </div>
+
+            <div class="flex items-center justify-between mb-6">
+                <div>
+                    <h1 class="text-2xl font-bold tracking-tight text-slate-900">${esc(submodelName)}</h1>
+                    <p class="text-slate-500 text-sm mt-0.5">
+                        ${sm ? `${scoreLabel(model.task_type)}: <span class="${scoreColor(sm.score, model.task_type)} font-mono font-bold">${formatScore(sm.score, model.task_type)}</span> · ${esc(sm.cpu_category)} CPU` : ''}
+                        · Hedef: <span class="font-mono text-slate-700">${esc(model.target_column)}</span>
+                    </p>
+                </div>
+                <button class="btn-export btn-sm" onclick="navigate('/model/${modelId}/export/${encodeURIComponent(submodelName)}')">Dışa Aktar</button>
+            </div>
+
+            <div class="flex gap-1 mb-6 p-1 rounded-xl bg-slate-100">
+                <button id="tab-single" class="flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all text-brand-700 bg-white shadow-sm" onclick="switchPredictTab('single')">${model.task_type === 'timeseries' ? 'Zaman Serisi Tahmini' : 'Tekli Tahmin'}</button>
+                <button id="tab-batch" class="flex-1 py-2.5 rounded-lg text-sm font-medium transition-all text-slate-500" onclick="switchPredictTab('batch')">Toplu Tahmin (CSV)</button>
+                <button id="tab-explain" class="flex-1 py-2.5 rounded-lg text-sm font-medium transition-all text-slate-500" onclick="switchPredictTab('explain')">Açıklanabilirlik</button>
+            </div>
+
+            <div id="predict-single">
+                ${model.task_type === 'timeseries' ? `
+                <div class="card p-6 mb-6">
+                    <h3 class="font-semibold text-slate-800 mb-2">Geçmiş Veriyi Yükleyin</h3>
+                    <p class="text-slate-500 text-sm mb-4">Zaman serisi tahmini için geçmiş veri penceresi (CSV) yükleyin. Model, ${model.prediction_length || 10} adım ileri tahmin üretecektir.</p>
+                    <div class="p-3 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-700 mb-4">
+                        <strong>Gerekli sütunlar:</strong> ${esc(model.timestamp_column || '(zaman damgası)')}, ${esc(model.target_column)}
+                        ${model.item_id_column && model.item_id_column !== '__item_id' ? ', ' + esc(model.item_id_column) : ''}
+                    </div>
+                    ${!model.model_loaded ? `
+                    <div class="p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-700 mb-4" id="ts-load-banner">
+                        <strong>Model henüz yüklü değil.</strong> Tahmin yapabilmek için modeli bir seferlik yüklemek gerekir, ardından hızlıca kullanılabilir.
+                        <button class="ml-2 px-3 py-1 rounded bg-amber-600 text-white text-xs font-semibold hover:bg-amber-700" onclick="loadModelForTimeseries('${modelId}', '${escAttr(submodelName)}', this)">Modeli Yükle (1-2 dk. sürebilir)</button>
+                    </div>` : ''}
+                    <div class="upload-zone" onclick="document.getElementById('ts-history-file').click()"
+                         ondragover="event.preventDefault(); this.classList.add('dragover')"
+                         ondragleave="this.classList.remove('dragover')"
+                         ondrop="event.preventDefault(); const f=event.dataTransfer.files[0]; if(f) runTimeSeriesPrediction(f, '${modelId}', '${escAttr(submodelName)}')">
+                        <svg class="mx-auto mb-3" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                        <p class="text-slate-600 font-medium">Geçmiş veri CSV'sini sürükleyin veya tıklayarak seçin</p>
+                    </div>
+                    <input type="file" id="ts-history-file" accept=".csv" class="hidden" onchange="runTimeSeriesPrediction(this.files[0], '${modelId}', '${escAttr(submodelName)}')">
+                </div>
+                <div id="single-result" class="hidden">
+                    <div class="card p-6" style="background: linear-gradient(135deg, #EFF6FF, #fff); border-color: #93C5FD;">
+                        <h3 class="font-semibold text-info-600 mb-3">Tahmin Sonuçları (${model.prediction_length || 10} adım)</h3>
+                        <div id="single-result-content"></div>
+                    </div>
+                </div>
+                ` : `
+                <div class="card p-6 mb-6">
+                    <h3 class="font-semibold text-slate-800 mb-4">Özellik Değerlerini Girin</h3>
+                    <div class="grid grid-cols-2 gap-3">
+                        ${features.map(f => `
+                            <div>
+                                <label class="block text-xs text-slate-500 mb-1">${esc(f)} <span class="text-slate-400 font-mono">(${esc(model.column_types[f] || 'bilinmeyen')})</span></label>
+                                <input class="input-field text-sm" id="feat-${f.replace(/[^a-zA-Z0-9]/g, '_')}" data-feature="${esc(f)}" placeholder="${esc(f)} girin">
+                            </div>
+                        `).join('')}
+                    </div>
+                    <button class="btn-primary w-full mt-5" id="predict-btn"
+                        onclick="${model.model_loaded ? `runSinglePrediction('${modelId}', '${escAttr(submodelName)}')` : `loadModelThenEnable('${modelId}', '${escAttr(submodelName)}')`}">
+                        ${model.model_loaded ? 'Tahmini Çalıştır' : 'Modeli Yükle (1-2 dk. sürebilir)'}
+                    </button>
+                    ${!model.model_loaded ? '<p class="text-xs text-slate-400 mt-2 text-center">Tahmin yapabilmek için modeli bir seferlik yüklemek gerekir, ardından hızlıca kullanılabilir.</p>' : ''}
+                </div>
+                <div id="single-result" class="hidden">
+                    <div class="card p-6" style="background: linear-gradient(135deg, #ECFDF5, #fff); border-color: #A7F3D0;">
+                        <h3 class="font-semibold text-brand-700 mb-3">Tahmin Sonucu</h3>
+                        <div id="single-result-content"></div>
+                    </div>
+                </div>
+                `}
+            </div>
+
+            <div id="predict-batch" class="hidden">
+                <div class="card p-6 mb-6">
+                    <h3 class="font-semibold text-slate-800 mb-4">Toplu Tahmin İçin CSV Yükle</h3>
+                    <p class="text-slate-500 text-sm mb-4">Aynı sütunları içeren bir CSV yükleyin (hedef sütun olmadan). Tahminler eklenerek indirilecektir.</p>
+                    <div class="upload-zone" onclick="document.getElementById('batch-file').click()"
+                         ondragover="event.preventDefault(); this.classList.add('dragover')"
+                         ondragleave="this.classList.remove('dragover')"
+                         ondrop="handleBatchDrop(event, '${modelId}', '${escAttr(submodelName)}')">
+                        <svg class="mx-auto mb-3" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                        <p class="text-slate-600 font-medium">CSV sürükleyin veya tıklayarak seçin</p>
+                    </div>
+                    <input type="file" id="batch-file" accept=".csv" class="hidden" onchange="runBatchPrediction(this, '${modelId}', '${escAttr(submodelName)}')">
+                </div>
+                <div id="batch-result" class="hidden"><div class="card p-6 text-center" id="batch-result-content"></div></div>
+            </div>
+
+            <div id="predict-explain" class="hidden">
+                <div class="card p-6 mb-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="font-semibold text-slate-800">Açıklanabilirlik Analizi</h3>
+                        <button class="btn-primary btn-sm" id="run-explain-btn" onclick="loadExplainability('${modelId}', '${escAttr(submodelName)}')">Analizi Başlat</button>
+                    </div>
+                    <p class="text-slate-500 text-sm">Bu modelin tahminlerini hangi özelliklerin yönlendirdiğini analiz edin.</p>
+                </div>
+                <div id="explain-result"></div>
+            </div>
+        </div>`;
+    }
+
+    function switchPredictTab(tab) {
+        document.getElementById('predict-single').classList.toggle('hidden', tab !== 'single');
+        document.getElementById('predict-batch').classList.toggle('hidden', tab !== 'batch');
+        document.getElementById('predict-explain').classList.toggle('hidden', tab !== 'explain');
+        ['single', 'batch', 'explain'].forEach(t => {
+            const btn = document.getElementById('tab-' + t);
+            if (btn) {
+                if (t === tab) { btn.className = 'flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all text-brand-700 bg-white shadow-sm'; }
+                else { btn.className = 'flex-1 py-2.5 rounded-lg text-sm font-medium transition-all text-slate-500'; }
+            }
+        });
+    }
+
+    async function loadModelForTimeseries(modelId, submodelName, btnEl) {
+        const origText = btnEl.textContent;
+        btnEl.disabled = true;
+        btnEl.textContent = 'Model yükleniyor…';
+        btnEl.style.opacity = '0.6';
+        try {
+            const res = await api(`/api/models/${modelId}/predict/${encodeURIComponent(submodelName)}`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ _load_only: true }),
+            });
+            if (res.error) {
+                alert('Model yüklenemedi: ' + res.error);
+                btnEl.textContent = origText;
+                btnEl.disabled = false;
+                btnEl.style.opacity = '1';
+                return;
+            }
+            const banner = document.getElementById('ts-load-banner');
+            if (banner) {
+                banner.className = 'p-3 rounded-lg bg-green-50 border border-green-200 text-xs text-green-700 mb-4';
+                banner.innerHTML = '<strong>Model yüklendi!</strong> Artık CSV yükleyerek hızlıca tahmin yapabilirsiniz.';
+            }
+        } catch (e) {
+            alert('Model yüklenirken hata oluştu.');
+            btnEl.textContent = origText;
+            btnEl.disabled = false;
+            btnEl.style.opacity = '1';
+        }
+    }
+
+    async function loadModelThenEnable(modelId, submodelName) {
+        const btn = document.getElementById('predict-btn');
+        if (!btn) return;
+        const origText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Model yükleniyor…';
+        btn.style.opacity = '0.6';
+
+        try {
+            const res = await api(`/api/models/${modelId}/predict/${encodeURIComponent(submodelName)}`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ _load_only: true }),
+            });
+            if (res.error) {
+                alert('Model yüklenemedi: ' + res.error);
+                btn.textContent = origText;
+                btn.disabled = false;
+                btn.style.opacity = '1';
+                return;
+            }
+            // Model is now loaded — switch button to predict mode
+            btn.textContent = 'Tahmini Çalıştır';
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            btn.setAttribute('onclick', `runSinglePrediction('${modelId}', '${escAttr(submodelName)}')`);
+            // Remove the note
+            const note = btn.nextElementSibling;
+            if (note && note.tagName === 'P') note.remove();
+        } catch (e) {
+            alert('Model yüklenirken hata oluştu.');
+            btn.textContent = origText;
+            btn.disabled = false;
+            btn.style.opacity = '1';
+        }
+    }
+
+    async function runSinglePrediction(modelId, submodelName) {
+        const inputs = document.querySelectorAll('[data-feature]');
+        const features = {};
+        inputs.forEach(inp => {
+            let val = inp.value.trim();
+            if (val === '') { features[inp.dataset.feature] = ''; return; }
+            if (!isNaN(val) && val !== '') val = parseFloat(val);
+            features[inp.dataset.feature] = val;
+        });
+        const filledCount = Object.values(features).filter(v => v !== '').length;
+        if (filledCount === 0) { alert('Lütfen en az bir özellik değeri girin.'); return; }
+
+        try {
+            const res = await api(`/api/models/${modelId}/predict/${encodeURIComponent(submodelName)}`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ features }),
+            });
+            const resultDiv = document.getElementById('single-result');
+            const contentDiv = document.getElementById('single-result-content');
+            resultDiv.classList.remove('hidden');
+            if (res.error) { contentDiv.innerHTML = `<p class="text-danger-500">${esc(res.error)}</p>`; return; }
+
+            const emptyCount = Object.values(features).filter(v => v === '').length;
+            const totalCount = Object.keys(features).length;
+            const warningHtml = emptyCount > 0 ? `<div class="text-xs text-warn-600 mb-3 flex items-center gap-1.5"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>${totalCount} özellikten ${emptyCount} tanesi boş bırakıldı — tahmin güvenilirliği düşük olabilir</div>` : '';
+
+            const predVal = res.prediction !== null && res.prediction !== undefined ? res.prediction : 'N/A';
+            let html = warningHtml + `<div class="text-3xl font-bold text-slate-800 mb-3">${esc(predVal)}</div>`;
+
+            if (res.probabilities) {
+                html += '<div class="space-y-2 mt-4"><div class="text-sm text-slate-500 mb-2">Güven Skorları:</div>';
+                Object.entries(res.probabilities).sort((a, b) => b[1] - a[1]).forEach(([cls, prob]) => {
+                    const safePct = (prob !== null && isFinite(prob)) ? (prob * 100).toFixed(1) : '0.0';
+                    html += `<div class="flex items-center gap-3"><span class="text-sm font-mono w-20 text-slate-600">${esc(cls)}</span><div class="flex-1 h-5 rounded-full overflow-hidden bg-slate-100"><div class="h-full rounded-full" style="width: ${safePct}%; background: linear-gradient(90deg, #10B981, #34D399);"></div></div><span class="text-sm font-mono font-bold w-14 text-right ${parseFloat(safePct) > 50 ? 'text-brand-600' : 'text-slate-500'}">%${safePct}</span></div>`;
+                });
+                html += '</div>';
+            }
+            contentDiv.innerHTML = html;
+        } catch (err) { alert('Tahmin hatası: ' + err.message); }
+    }
+
+    async function runTimeSeriesPrediction(file, modelId, submodelName) {
+        if (!file) return;
+        const resultDiv = document.getElementById('single-result');
+        const contentDiv = document.getElementById('single-result-content');
+        resultDiv.classList.remove('hidden');
+        contentDiv.innerHTML = '<div class="spinner mx-auto my-4"></div><p class="text-slate-500 text-center">Geçmiş veri işleniyor ve tahmin üretiliyor...</p>';
+
+        try {
+            // Read CSV as text, parse to rows, send as JSON history
+            const text = await file.text();
+            const lines = text.trim().split('\n');
+            if (lines.length < 2) {
+                contentDiv.innerHTML = '<p class="text-danger-500">CSV en az 1 başlık ve 1 veri satırı içermelidir.</p>';
+                return;
+            }
+            const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+            const history = [];
+            for (let i = 1; i < lines.length; i++) {
+                const vals = lines[i].split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+                const row = {};
+                headers.forEach((h, idx) => {
+                    let v = vals[idx] || '';
+                    if (!isNaN(v) && v !== '') v = parseFloat(v);
+                    row[h] = v;
+                });
+                history.push(row);
+            }
+
+            const res = await api(`/api/models/${modelId}/predict/${encodeURIComponent(submodelName)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ history }),
+            });
+
+            if (res.error) {
+                contentDiv.innerHTML = `<p class="text-danger-500">${esc(res.error)}</p>`;
+                return;
+            }
+
+            // Display forecast table
+            const forecast = res.forecast || [];
+            if (forecast.length === 0) {
+                contentDiv.innerHTML = '<p class="text-slate-500">Tahmin sonucu boş döndü.</p>';
+                return;
+            }
+
+            const cols = Object.keys(forecast[0]);
+            let html = `<div class="text-sm text-slate-600 mb-3">${forecast.length} adımlık tahmin üretildi</div>`;
+            html += '<div class="overflow-x-auto"><table class="data-table text-xs"><thead><tr>';
+            cols.forEach(c => { html += `<th>${esc(c)}</th>`; });
+            html += '</tr></thead><tbody>';
+            forecast.forEach(row => {
+                html += '<tr>';
+                cols.forEach(c => {
+                    const v = row[c];
+                    const display = v !== null && v !== undefined ? (typeof v === 'number' ? v.toFixed(4) : esc(v)) : '—';
+                    html += `<td class="font-mono">${display}</td>`;
+                });
+                html += '</tr>';
+            });
+            html += '</tbody></table></div>';
+            contentDiv.innerHTML = html;
+        } catch (err) {
+            contentDiv.innerHTML = `<p class="text-danger-500">Tahmin hatası: ${esc(err.message)}</p>`;
+        }
+    }
+
+    function handleBatchDrop(e, modelId, submodelName) { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) runBatchFromFile(f, modelId, submodelName); }
+    function runBatchPrediction(input, modelId, submodelName) { const f = input.files[0]; if (f) runBatchFromFile(f, modelId, submodelName); }
+
+    async function runBatchFromFile(file, modelId, submodelName) {
+        const batchResult = document.getElementById('batch-result');
+        const batchContent = document.getElementById('batch-result-content');
+        batchResult.classList.remove('hidden');
+        batchContent.innerHTML = '<div class="spinner mx-auto my-4"></div><p class="text-slate-500">Toplu tahmin işleniyor...</p>';
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+            const res = await fetch(API + `/api/models/${modelId}/predict-batch/${encodeURIComponent(submodelName)}`, {
+                method: 'POST', body: formData,
+                headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {},
+            });
+            if (res.headers.get('Content-Type')?.includes('text/csv')) {
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                batchContent.innerHTML = `<svg class="mx-auto mb-3" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg><h3 class="text-xl font-bold text-brand-700 mb-2">Toplu Tahmin Tamamlandı</h3><p class="text-slate-500 text-sm mb-4">Tahminler CSV dosyanıza eklendi</p><a href="${url}" download="tahminler.csv" class="btn-primary inline-flex items-center gap-2"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Tahminleri İndir</a>`;
+            } else {
+                const data = await res.json();
+                batchContent.innerHTML = `<p class="text-danger-500">Hata: ${esc(data.error || 'Bilinmeyen hata')}</p>`;
+            }
+        } catch (err) { batchContent.innerHTML = `<p class="text-danger-500">Hata: ${esc(err.message)}</p>`; }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  EXPLAINABILITY
+    // ══════════════════════════════════════════════════════════
+    async function loadExplainability(modelId, submodelName) {
+        // Support both tabular and call_analysis containers
+        const container = document.getElementById('explain-result') || document.getElementById('ca-explain-result');
+        const btn = document.getElementById('run-explain-btn') || document.getElementById('run-ca-explain-btn');
+        if (!container) return;
+        if (btn) { btn.disabled = true; btn.textContent = 'Analiz ediliyor...'; }
+        container.innerHTML = `<div class="card p-8 text-center"><div class="spinner mx-auto mb-4"></div><p class="text-slate-500">Analiz hesaplanıyor...</p><p class="text-slate-400 text-xs mt-2">Bu işlem 30-60 saniye sürebilir</p></div>`;
+        try {
+            const res = await api(`/api/models/${modelId}/explain/${encodeURIComponent(submodelName)}`);
+            if (res.error) { container.innerHTML = `<div class="card p-6"><p class="text-danger-500">${esc(res.error)}</p></div>`; if (btn) { btn.disabled = false; btn.textContent = 'Tekrar Dene'; } return; }
+
+            // ── TIME SERIES EXPLAINABILITY ──
+            if (res.task_type === 'timeseries' && res.series_data) {
+                renderTimeSeriesExplain(container, res);
+                if (btn) { btn.disabled = false; btn.textContent = 'Tekrar Analiz Et'; }
+                return;
+            }
+
+            // ── CALL ANALYSIS (LLM) EXPLAINABILITY ──
+            if (res.task_type === 'call_analysis') {
+                renderCallAnalysisExplain(container, res);
+                if (btn) { btn.disabled = false; btn.textContent = 'Tekrar Analiz Et'; }
+                return;
+            }
+
+            // ── TABULAR EXPLAINABILITY ──
+            const fi = res.feature_importance || [];
+            if (fi.length === 0 && res.summary) {
+                container.innerHTML = `<div class="card p-6 mb-6"><div class="prose text-sm text-slate-600">${esc(res.summary).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>')}</div></div>`;
+                if (btn) { btn.disabled = false; btn.textContent = 'Tekrar Analiz Et'; }
+                return;
+            }
+            const topN = fi.slice(0, 15);
+            let html = `<div class="card p-6 mb-6"><h3 class="font-semibold text-slate-800 mb-4 flex items-center gap-2">Özellik Önemi <span class="tag tag-green text-xs">${esc(res.method || '')}</span></h3><div class="space-y-2">${topN.map((f, i) => {
+                const pct = (f.importance * 100).toFixed(0);
+                return `<div class="flex items-center gap-3"><span class="text-xs text-slate-400 w-5 text-right font-bold">${i+1}</span><span class="text-sm font-mono w-44 truncate text-slate-700" title="${esc(f.feature)}">${esc(f.feature)}</span><div class="flex-1 h-6 rounded overflow-hidden bg-slate-100"><div class="h-full rounded" style="width: ${pct}%; background: linear-gradient(90deg, #10B981, #34D399); min-width: 2px;"></div></div><span class="text-xs font-mono w-12 text-right text-slate-500">%${pct}</span></div>`;
+            }).join('')}</div></div>`;
+
+            // ── SHAP analysis (if available) ──
+            if (res.shap && res.shap.shap_importance && res.shap.shap_importance.length > 0) {
+                const shapItems = res.shap.shap_importance.slice(0, 15);
+                html += `<div class="card p-6 mb-6"><h3 class="font-semibold text-slate-800 mb-4 flex items-center gap-2">SHAP Değerleri <span class="tag tag-blue text-xs">${esc(res.shap.method || 'SHAP')}</span></h3>
+                    <p class="text-xs text-slate-400 mb-3">SHAP, modelin iç yapısına bakarak her özelliğin tahmini ne kadar etkilediğini ölçer. Permütasyon öneminden farklı olarak, modelin karar mekanizmasını doğrudan analiz eder.</p>
+                    <div class="space-y-2">${shapItems.map((f, i) => {
+                        const pct = (f.importance * 100).toFixed(0);
+                        return `<div class="flex items-center gap-3"><span class="text-xs text-slate-400 w-5 text-right font-bold">${i+1}</span><span class="text-sm font-mono w-44 truncate text-slate-700" title="${esc(f.feature)}">${esc(f.feature)}</span><div class="flex-1 h-6 rounded overflow-hidden bg-slate-100"><div class="h-full rounded" style="width: ${pct}%; background: linear-gradient(90deg, #3B82F6, #60A5FA); min-width: 2px;"></div></div><span class="text-xs font-mono w-12 text-right text-slate-500">%${pct}</span></div>`;
+                    }).join('')}</div></div>`;
+            }
+
+            container.innerHTML = html;
+            if (btn) { btn.disabled = false; btn.textContent = 'Tekrar Analiz Et'; }
+        } catch (err) { container.innerHTML = `<div class="card p-6"><p class="text-danger-500">Analiz hatası: ${esc(err.message)}</p></div>`; if (btn) { btn.disabled = false; btn.textContent = 'Tekrar Dene'; } }
+    }
+
+    function renderCallAnalysisExplain(container, res) {
+        const vars = res.variable_analysis || {};
+        const samples = res.reasoning_samples || [];
+
+        let varsHtml = '';
+        for (const [vn, va] of Object.entries(vars)) {
+            const safeVn = esc(vn);
+            if (va.type === 'classification') {
+                const acc = va.accuracy || 0;
+                const accColor = acc >= 80 ? 'text-brand-600' : acc >= 60 ? 'text-warn-500' : 'text-danger-500';
+                varsHtml += `<div class="card p-5 mb-4">
+                    <h4 class="font-semibold text-slate-800 text-sm mb-3">${safeVn} <span class="tag tag-green text-xs">Sınıflandırma</span></h4>
+                    <div class="text-2xl font-bold ${accColor} mb-2">%${acc}</div>
+                    <div class="text-xs text-slate-400 mb-3">${va.correct || 0}/${va.n || 0} doğru tahmin</div>`;
+                if (va.per_class_accuracy) {
+                    varsHtml += '<div class="space-y-1.5">';
+                    for (const [cls, clsAcc] of Object.entries(va.per_class_accuracy)) {
+                        const safeCls = esc(cls);
+                        const pct = Math.round(clsAcc);
+                        const barCol = pct >= 80 ? '#10B981' : pct >= 60 ? '#F59E0B' : '#EF4444';
+                        varsHtml += `<div class="flex items-center gap-3"><span class="text-xs w-32 truncate text-slate-600">${safeCls}</span><div class="flex-1 h-4 rounded overflow-hidden bg-slate-100"><div class="h-full rounded" style="width:${pct}%;background:${barCol};min-width:2px;"></div></div><span class="text-xs font-mono w-10 text-right text-slate-500">%${pct}</span></div>`;
+                    }
+                    varsHtml += '</div>';
+                }
+                varsHtml += '</div>';
+            } else if (va.type === 'regression') {
+                varsHtml += `<div class="card p-5 mb-4">
+                    <h4 class="font-semibold text-slate-800 text-sm mb-3">${safeVn} <span class="tag tag-orange text-xs">Sayısal</span></h4>
+                    <div class="text-xl font-bold text-slate-800 mb-1">MAE: ${va.mae != null ? va.mae : '—'}</div>
+                    <div class="text-xs text-slate-400">RMSE: ${va.rmse != null ? va.rmse : '—'} · n=${va.n || 0}</div>
+                </div>`;
+            }
+        }
+
+        let samplesHtml = '';
+        if (samples.length > 0) {
+            samplesHtml = `<div class="card p-5 mb-4">
+                <h4 class="font-semibold text-slate-800 text-sm mb-3">Örnek LLM Gerekçeleri</h4>
+                <div class="space-y-2">${samples.map(s => {
+                    const safeFn = esc(s.filename || '');
+                    const safeR = esc(s.reasoning || '');
+                    return `<details class="border border-slate-200 rounded-lg"><summary class="px-4 py-2 cursor-pointer text-sm font-medium text-slate-700 hover:bg-slate-50">${safeFn}</summary><div class="px-4 py-3 text-xs text-slate-600 bg-slate-25 border-t border-slate-100 whitespace-pre-wrap max-h-32 overflow-y-auto">${safeR}</div></details>`;
+                }).join('')}</div>
+            </div>`;
+        }
+
+        let errorHtml = '';
+        if (res.error_count > 0) {
+            errorHtml = `<div class="p-3 rounded-lg bg-red-50 border border-red-100 mb-4">
+                <p class="text-xs text-red-700"><strong>${res.error_count}</strong> dosyada hata oluştu (%${res.error_rate}). Bu dosyalar analiz sonuçlarına dahil edilmedi.</p>
+            </div>`;
+        }
+
+        const summaryFormatted = esc(res.summary || '').replace(/## ([^\n]+)/g, '<h4 class="font-bold text-slate-700 mt-3 mb-1">$1</h4>').replace(/### ([^\n]+)/g, '<h5 class="font-semibold text-slate-600 mt-2 mb-1">$1</h5>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/  - /g, '<br>&nbsp;&nbsp;• ').replace(/\n/g, '<br>');
+
+        container.innerHTML = `<div class="space-y-4">
+            ${errorHtml}
+            ${varsHtml}
+            ${samplesHtml}
+            <div class="card p-5">
+                <h4 class="font-semibold text-slate-800 text-sm mb-3 flex items-center gap-2">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                    Özet
+                </h4>
+                <div class="text-sm text-slate-600 leading-relaxed">${summaryFormatted}</div>
+            </div>
+        </div>`;
+    }
+
+    function renderTimeSeriesExplain(container, res) {
+        destroyCharts();
+        const stats = res.basic_stats || {};
+        const trend = res.trend || {};
+        const acf = res.autocorrelation || {};
+        const decomp = res.decomposition;
+        const stationarity = res.stationarity || {};
+        const models = res.model_insights || [];
+
+        // Strength gauge helper
+        function gauge(val, label, color) {
+            const pct = Math.min(100, Math.round((val || 0) * 100));
+            return `<div class="flex items-center gap-3"><span class="text-xs text-slate-500 w-24">${label}</span><div class="flex-1 h-5 rounded-full overflow-hidden bg-slate-100"><div class="h-full rounded-full" style="width:${pct}%;background:${color};min-width:2px;"></div></div><span class="text-xs font-mono font-bold w-10 text-right text-slate-600">${pct}%</span></div>`;
+        }
+
+        // Stationarity badge
+        const statBadge = stationarity.stationary === true
+            ? '<span class="tag tag-green">Kararlı</span>'
+            : stationarity.stationary === false
+            ? '<span class="tag tag-orange">Değişken</span>'
+            : '<span class="tag tag-gray">Bilinmiyor</span>';
+
+        // Stationarity subtitle (plain language)
+        const statSubtitle = stationarity.stationary === true
+            ? 'Ortalaması sabit, tahmin edilmesi kolay'
+            : stationarity.stationary === false
+            ? 'Ortalaması değişiyor, dikkatli modelleme gerekir'
+            : '';
+
+        // Trend badge
+        const trendBadge = trend.direction === 'yükseliş'
+            ? '<span class="tag tag-green">↑ Yükseliş</span>'
+            : trend.direction === 'düşüş'
+            ? '<span class="tag tag-orange">↓ Düşüş</span>'
+            : '<span class="tag tag-gray">→ Sabit</span>';
+
+        // Trend subtitle (plain language)
+        const trendR2 = (trend.r_squared || 0);
+        const trendSubtitle = trendR2 > 0.6 ? 'Güçlü yönelim' : trendR2 > 0.3 ? 'Orta düzey yönelim' : 'Zayıf yönelim';
+
+        const seasonBadge = acf.detected_seasonal_period
+            ? `<span class="tag tag-blue">Her ${acf.detected_seasonal_period} adımda</span>`
+            : '<span class="tag tag-gray">Tespit Edilemedi</span>';
+
+        const seasonPct = Math.round((res.seasonal_strength || 0) * 100);
+        const seasonSubtitle = acf.detected_seasonal_period
+            ? `Tekrar eden kalıp gücü: %${seasonPct}`
+            : 'Düzenli bir tekrar kalıbı bulunamadı';
+
+        let html = `
+        <div class="space-y-6">
+            <!-- Stats Cards -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="stat-card">
+                    <div class="text-slate-500 text-xs font-medium mb-1">Veri Noktası Sayısı</div>
+                    <div class="text-2xl font-bold text-slate-800">${stats.count || '?'}</div>
+                    <div class="text-xs text-slate-400 mt-1">${(stats.start || '').substring(0,10)} — ${(stats.end || '').substring(0,10)}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="text-slate-500 text-xs font-medium mb-1">Genel Yön</div>
+                    <div class="mb-1">${trendBadge}</div>
+                    <div class="text-xs text-slate-400">${trendSubtitle}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="text-slate-500 text-xs font-medium mb-1">Tekrar Eden Kalıp</div>
+                    <div class="mb-1">${seasonBadge}</div>
+                    <div class="text-xs text-slate-400">${seasonSubtitle}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="text-slate-500 text-xs font-medium mb-1">Tahmin Kolaylığı</div>
+                    <div class="mb-1">${statBadge}</div>
+                    <div class="text-xs text-slate-400">${statSubtitle}</div>
+                </div>
+            </div>
+
+            <!-- Strength Gauges -->
+            <div class="card p-5">
+                <h3 class="font-semibold text-slate-800 mb-4 text-sm">Bileşen Güçleri</h3>
+                <div class="space-y-3">
+                    ${gauge(res.trend_strength, 'Trend Gücü', 'linear-gradient(90deg, #3B82F6, #60A5FA)')}
+                    ${gauge(res.seasonal_strength, 'Mevsimsel Güç', 'linear-gradient(90deg, #8B5CF6, #A78BFA)')}
+                    ${gauge(stats.cv ? Math.min(1, stats.cv) : 0, 'Değişkenlik (CV)', 'linear-gradient(90deg, #F59E0B, #FBBF24)')}
+                </div>
+                <div class="mt-3 p-3 rounded-lg bg-blue-50 border border-blue-100">
+                    <p class="text-xs text-blue-700"><strong>Nasıl okunur:</strong> Çubuklar %100'e yakınsa o bileşen verilerinizde baskındır. <strong>Trend Gücü</strong> = uzun vadeli yönün ne kadar belirgin olduğu. <strong>Mevsimsel Güç</strong> = tekrar eden kalıpların ne kadar düzenli olduğu. <strong>Değişkenlik</strong> = verilerin ortalamadan ne kadar uzaklaştığı (yüksek = daha dalgalı).</p>
+                </div>
+            </div>
+
+            <!-- Time Series Chart -->
+            <div class="card p-5">
+                <h3 class="font-semibold text-slate-800 mb-2 text-sm">Verilerinizin Zaman İçindeki Seyri</h3>
+                <div style="height:280px;"><canvas id="ts-series-chart"></canvas></div>
+                <div class="mt-3 p-3 rounded-lg bg-blue-50 border border-blue-100">
+                    <p class="text-xs text-blue-700"><strong>Nasıl okunur:</strong> <strong>Mavi alan</strong> gerçek değerlerinizi, <strong>kırmızı kesikli çizgi</strong> genel yönelimi (trendi) gösterir. Kırmızı çizgi yukarı gidiyorsa verileriniz artıyor, aşağı gidiyorsa azalıyor. <strong>Turuncu çizgi</strong> (varsa) kısa vadeli dalgalanmaları yumuşatarak orta vadeli gidişatı gösterir.</p>
+                </div>
+            </div>
+
+            <!-- ACF Chart -->
+            <div class="card p-5">
+                <h3 class="font-semibold text-slate-800 mb-2 text-sm">Geçmişle Bağlantı Analizi</h3>
+                <p class="text-xs text-slate-400 mb-3">Her çubuk, verilerin geçmişteki belirli bir adım önceki değerlerle ne kadar bağlantılı olduğunu gösterir</p>
+                <div style="height:200px;"><canvas id="ts-acf-chart"></canvas></div>
+                <div class="mt-3 p-3 rounded-lg bg-blue-50 border border-blue-100">
+                    <p class="text-xs text-blue-700"><strong>Nasıl okunur:</strong> Her çubuk bir "gecikme" (lag) — yani kaç adım geriye bakıldığını temsil eder. <strong>Mavi kesikli çizgiyi aşan çubuklar</strong>, o kadar adım önceki değerlerle anlamlı bir bağlantı olduğunu gösterir. Örneğin: 12. çubuk yüksekse, 12 adım önceki verilerle güçlü bir tekrar kalıbı var demektir (aylık veride yıllık döngü gibi).</p>
+                </div>
+            </div>
+
+            ${decomp ? `
+            <!-- Decomposition Chart -->
+            <div class="card p-5">
+                <h3 class="font-semibold text-slate-800 mb-2 text-sm">Verilerinizin Bileşenlere Ayrıştırılması (Periyot: ${decomp.period})</h3>
+                <div class="grid grid-cols-1 gap-4">
+                    <div style="height:160px;"><canvas id="ts-decomp-trend"></canvas></div>
+                    <div style="height:140px;"><canvas id="ts-decomp-season"></canvas></div>
+                    <div style="height:140px;"><canvas id="ts-decomp-resid"></canvas></div>
+                </div>
+                <div class="mt-3 p-3 rounded-lg bg-blue-50 border border-blue-100">
+                    <p class="text-xs text-blue-700"><strong>Nasıl okunur:</strong> Verileriniz üç bileşene ayrıldı: <strong>Trend</strong> (uzun vadeli yön — yükseliyor mu, düşüyor mu?), <strong>Mevsimsel</strong> (her ${decomp.period} adımda bir tekrar eden kalıp — ne kadar düzenliyse tahminler o kadar güvenilir), <strong>Kalıntı</strong> (trend ve mevsimsellik çıkarıldıktan sonra kalan rastgele dalgalanmalar — ne kadar küçükse model verilerinizi o kadar iyi açıklıyor).</p>
+                </div>
+            </div>
+            ` : ''}
+
+            <!-- Model Insights -->
+            ${models.length ? `
+            <div class="card p-5">
+                <h3 class="font-semibold text-slate-800 mb-4 text-sm">Model Performans Karşılaştırması</h3>
+                <div class="space-y-2">
+                    ${models.map((m, i) => {
+                        const maxMase = Math.max(...models.map(x => x.mase), 1);
+                        const pct = Math.round((m.mase / maxMase) * 100);
+                        const col = m.mase <= 0.5 ? '#10B981' : m.mase <= 1.0 ? '#059669' : m.mase <= 2.0 ? '#F97316' : '#EF4444';
+                        return `<div class="flex items-center gap-3"><span class="text-xs text-slate-400 w-5 text-right font-bold">${i+1}</span><span class="text-xs font-mono w-48 truncate text-slate-700">${esc(m.name)}</span><div class="flex-1 h-5 rounded overflow-hidden bg-slate-100"><div class="h-full rounded" style="width:${pct}%;background:${col};min-width:4px;"></div></div><span class="text-xs font-mono w-12 text-right font-bold" style="color:${col}">${m.mase.toFixed(2)}</span></div>`;
+                    }).join('')}
+                </div>
+                <div class="mt-3 p-3 rounded-lg bg-blue-50 border border-blue-100">
+                    <p class="text-xs text-blue-700"><strong>Nasıl okunur:</strong> Skor (MASE) ne kadar <strong>düşükse</strong> model o kadar iyi. <strong>1.0'ın altı</strong> = basit bir "son değeri tekrarla" yönteminden daha başarılı (yeşil = iyi). <strong>1.0 üstü</strong> = basit yöntemlerden daha kötü, iyileştirme gerekebilir (turuncu/kırmızı). En üstteki model en iyi performansı gösterendir.</p>
+                </div>
+            </div>
+            ` : ''}
+
+            <!-- Summary -->
+            <div class="card p-5">
+                <h3 class="font-semibold text-slate-800 mb-3 text-sm flex items-center gap-2">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                    Özet Rapor
+                </h3>
+                <div class="text-sm text-slate-600 leading-relaxed">
+                    ${esc(res.summary || '').replace(/## ([^\n]+)/g, '<h4 class="font-bold text-slate-700 mt-3 mb-1">$1</h4>').replace(/### ([^\n]+)/g, '<h5 class="font-semibold text-slate-600 mt-2 mb-1">$1</h5>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>')}
+                </div>
+            </div>
+        </div>`;
+
+        container.innerHTML = html;
+
+        // ── Render Charts ──
+        const seriesData = res.series_data || {};
+        const timestamps = (seriesData.timestamps || []).map(t => t.substring(0, 10));
+        const values = seriesData.values || [];
+
+        // 1. Series + Trend chart
+        const seriesCtx = document.getElementById('ts-series-chart');
+        if (seriesCtx && values.length > 0) {
+            const datasets = [
+                { label: res.target_column, data: values, borderColor: '#3B82F6', backgroundColor: 'rgba(59,130,246,0.08)', borderWidth: 1.5, pointRadius: 0, fill: true, tension: 0.1, order: 2 },
+            ];
+            if (trend.trend_line && trend.trend_line.length > 0) {
+                datasets.push({ label: 'Trend', data: trend.trend_line, borderColor: '#EF4444', borderWidth: 2, borderDash: [6, 3], pointRadius: 0, fill: false, order: 1 });
+            }
+            const rmean = (res.rolling_stats || {}).rolling_mean;
+            if (rmean && rmean.length > 0) {
+                datasets.push({ label: `Hareketli Ort. (${(res.rolling_stats || {}).window || '?'})`, data: rmean, borderColor: '#F59E0B', borderWidth: 1.5, borderDash: [3, 2], pointRadius: 0, fill: false, order: 1 });
+            }
+            chartInstances['ts-series'] = new Chart(seriesCtx, {
+                type: 'line',
+                data: { labels: timestamps, datasets },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', labels: { font: { size: 11 }, boxWidth: 20 } } }, scales: { x: { ticks: { maxTicksLimit: 12, font: { size: 10 } }, grid: { display: false } }, y: { grid: { color: '#F1F5F9' }, ticks: { font: { size: 10 } } } }, interaction: { mode: 'index', intersect: false } }
+            });
+        }
+
+        // 2. ACF Chart
+        const acfCtx = document.getElementById('ts-acf-chart');
+        if (acfCtx && acf.acf_values && acf.acf_values.length > 1) {
+            const lags = acf.acf_values.slice(1); // skip lag 0
+            const lagLabels = lags.map((_, i) => i + 1);
+            const confBand = acf.confidence_band || 0.1;
+            const barColors = lags.map(v => Math.abs(v) > confBand ? 'rgba(59,130,246,0.8)' : 'rgba(203,213,225,0.6)');
+            chartInstances['ts-acf'] = new Chart(acfCtx, {
+                type: 'bar',
+                data: { labels: lagLabels, datasets: [
+                    { label: 'ACF', data: lags, backgroundColor: barColors, borderRadius: 2, barPercentage: 0.8 },
+                ] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, annotation: {} },
+                    scales: { x: { title: { display: true, text: 'Gecikme (Lag)', font: { size: 10 } }, ticks: { font: { size: 9 } }, grid: { display: false } }, y: { min: -1, max: 1, grid: { color: '#F1F5F9' }, ticks: { font: { size: 10 } } } } },
+                plugins: [{
+                    id: 'confLines',
+                    afterDraw(chart) {
+                        const { ctx: c, chartArea: a, scales: { y } } = chart;
+                        c.save(); c.strokeStyle = '#3B82F6'; c.lineWidth = 1; c.setLineDash([5, 3]);
+                        [confBand, -confBand].forEach(v => { const yp = y.getPixelForValue(v); c.beginPath(); c.moveTo(a.left, yp); c.lineTo(a.right, yp); c.stroke(); });
+                        c.restore();
+                    }
+                }]
+            });
+        }
+
+        // 3. Decomposition Charts
+        if (decomp && timestamps.length > 0) {
+            function decompChart(id, data, label, color) {
+                const ctx = document.getElementById(id);
+                if (!ctx || !data) return;
+                chartInstances[id] = new Chart(ctx, {
+                    type: 'line',
+                    data: { labels: timestamps, datasets: [{ label, data, borderColor: color, borderWidth: 1.5, pointRadius: 0, fill: false, tension: 0.1, spanGaps: true }] },
+                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', labels: { font: { size: 10 }, boxWidth: 16 } } }, scales: { x: { ticks: { maxTicksLimit: 10, font: { size: 9 } }, grid: { display: false } }, y: { grid: { color: '#F1F5F9' }, ticks: { font: { size: 9 } } } } }
+                });
+            }
+            decompChart('ts-decomp-trend', decomp.trend, 'Trend Bileşeni', '#3B82F6');
+            decompChart('ts-decomp-season', decomp.seasonal, 'Mevsimsel Bileşen', '#8B5CF6');
+            decompChart('ts-decomp-resid', decomp.residual, 'Kalıntı (Residual)', '#94A3B8');
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  EXPORT PAGE
+    // ══════════════════════════════════════════════════════════
+    async function renderExport(modelId, submodelName) {
+        submodelName = decodeURIComponent(submodelName);
+        app().innerHTML = `<div class="flex items-center justify-center py-20"><div class="spinner"></div></div>`;
+        const model = await api(`/api/models/${modelId}`);
+        if (model.error) return renderNotFound();
+        const sm = model.submodels.find(s => s.name === submodelName);
+        if (!sm) return renderNotFound();
+
+        app().innerHTML = `
+        <div class="fade-in max-w-4xl mx-auto">
+            <div class="text-sm text-slate-400 mb-4 flex items-center gap-1.5">
+                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/')">Ana Sayfa</span><span>›</span>
+                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/model/${modelId}/results')">${esc(model.name)}</span><span>›</span>
+                <span class="text-slate-600">Dışa Aktar: ${esc(submodelName)}</span>
+            </div>
+
+            <h1 class="text-2xl font-bold tracking-tight text-slate-900 mb-1">Dışa Aktarma Seçenekleri</h1>
+            <p class="text-slate-500 text-sm mb-8">${esc(submodelName)} · ${scoreLabel(model.task_type)}: <span class="${scoreColor(sm.score, model.task_type)} font-mono font-bold">${formatScore(sm.score, model.task_type)}</span></p>
+
+            ${model.task_type === 'timeseries' ? `
+            <div class="card p-5 mb-6" style="background: linear-gradient(135deg, #EFF6FF, #fff); border-color: #93C5FD;">
+                <div class="flex items-center gap-3">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                    <div>
+                        <div class="font-semibold text-sm text-blue-800">Zaman Serisi Modeli</div>
+                        <p class="text-xs text-blue-600 mt-0.5">SQL dışa aktarımı zaman serisi modelleri için desteklenmiyor (stateful modeller CASE WHEN ile ifade edilemez). Airflow DAG paketi desteklenir.</p>
+                    </div>
+                </div>
+            </div>
+            ` : ''}
+
+            ${model.text_columns && model.text_columns.length > 0 ? `
+            <div class="card p-5 mb-6" style="background: linear-gradient(135deg, #F5F3FF, #fff); border-color: #C4B5FD;">
+                <div class="flex items-center gap-3">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                    <div>
+                        <div class="font-semibold text-sm text-purple-800">Metin Embedding Aktif</div>
+                        <p class="text-xs text-purple-600 mt-0.5">Metin sütunları (${model.text_columns.map(c => esc(c)).join(', ')}) otomatik olarak anlamsal embedding'lere dönüştürülmüştür. Model: ${esc(model.embedding_model || 'all-MiniLM-L6-v2')}</p>
+                    </div>
+                </div>
+            </div>
+            ` : ''}
+
+            <div class="card p-6 mb-6">
+                <h3 class="font-semibold text-slate-800 mb-4">Maliyet Tahmini</h3>
+                <div class="grid grid-cols-2 gap-4 mb-5">
+                    <div>
+                        <label class="block text-sm font-medium text-slate-600 mb-1.5">Çalışma başına kaç satır işlenecek?</label>
+                        <input class="input-field" type="number" id="cost-rows" value="1000">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-600 mb-1.5">Model ne sıklıkta çalışacak?</label>
+                        <select class="input-field" id="cost-freq">
+                            <option value="monthly">Aylık</option><option value="weekly">Haftalık</option>
+                            <option value="daily" selected>Günlük</option><option value="hourly">Saatlik</option>
+                        </select>
+                    </div>
+                </div>
+                ${sm.inference_time_sec != null && sm.inference_time_sec <= 0 ? '<p class="text-xs text-amber-600 mb-2">Tahmin süresi bu model türü için ölçülemedi. Varsayılan değer (0.1 sn) kullanılacaktır.</p>' : ''}
+                <button class="btn-primary" onclick="calculateCost('${modelId}', '${escAttr(submodelName)}', ${sm.inference_time_sec}, ${model.num_columns})">Maliyeti Hesapla</button>
+                <div id="cost-result" class="hidden mt-5"></div>
+            </div>
+
+            <div class="card p-6">
+                <h3 class="font-semibold text-slate-800 mb-4">Dışa Aktarma Yöntemleri</h3>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="p-5 rounded-xl border-2 transition-all ${sm.airflow_support.supported ? 'border-brand-200 hover:border-brand-400 cursor-pointer bg-brand-50/30' : 'border-slate-200 opacity-50'}"
+                         ${sm.airflow_support.supported ? `onclick="downloadExport('airflow', '${modelId}', '${escAttr(submodelName)}')"` : ''}>
+                        <div class="flex items-center gap-3 mb-3">
+                            <div class="w-10 h-10 rounded-lg flex items-center justify-center ${sm.airflow_support.supported ? 'bg-brand-100' : 'bg-slate-100'}">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${sm.airflow_support.supported ? '#059669' : '#94A3B8'}" stroke-width="2"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg>
+                            </div>
+                            <div>
+                                <div class="font-semibold text-sm text-slate-800">Günlük Çalışabilir</div>
+                                <div class="text-xs text-slate-500">Airflow DAG Paketi (ZIP)</div>
+                            </div>
+                        </div>
+                        <p class="text-slate-500 text-xs">DAG dosyası, eğitilmiş model ve kurulum talimatları içeren ZIP paketi. Günlük veya saatlik çalıştırılabilir.</p>
+                    </div>
+
+                    <div class="p-5 rounded-xl border-2 transition-all ${sm.sql_support.easy_sql ? 'border-brand-200 hover:border-brand-400 cursor-pointer bg-brand-50/30' : 'border-slate-200 opacity-50'}"
+                         ${sm.sql_support.easy_sql ? `onclick="downloadExport('mssql', '${modelId}', '${escAttr(submodelName)}')"` : ''}>
+                        <div class="flex items-center gap-3 mb-3">
+                            <div class="w-10 h-10 rounded-lg flex items-center justify-center ${sm.sql_support.easy_sql ? 'bg-brand-100' : 'bg-slate-100'}">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${sm.sql_support.easy_sql ? '#059669' : '#94A3B8'}" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+                            </div>
+                            <div>
+                                <div class="font-semibold text-sm text-slate-800">Saatlik Çalışabilir</div>
+                                <div class="text-xs ${sm.sql_support.easy_sql ? 'text-brand-600' : 'text-slate-400'}">${sm.sql_support.easy_sql ? 'Saf SQL sorgusu — .sql dosyası' : 'Bu model için desteklenmiyor'}</div>
+                            </div>
+                        </div>
+                        <p class="text-slate-500 text-xs">${sm.sql_support.easy_sql ? 'CASE WHEN mantığı ile tek .sql dosyası. Ek bağımlılık gerektirmez — her SQL Server üzerinde çalışır.' : 'Bu model türü SQL olarak dışa aktarılamaz. Günlük çalışabilir seçeneğini kullanın.'}</p>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    async function calculateCost(modelId, submodelName, inferenceTime, numColumns) {
+        // Guard: clamp inference time and columns to sensible positive values
+        inferenceTime = Math.max(parseFloat(inferenceTime) || 0.1, 0.01);
+        numColumns = Math.max(parseInt(numColumns) || 1, 1);
+        const rows = Math.max(parseInt(document.getElementById('cost-rows').value) || 1000, 1);
+        const freq = document.getElementById('cost-freq').value;
+        try {
+            const res = await api('/api/cost-estimate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ inference_time_sec: inferenceTime, num_rows: rows, num_columns: numColumns, frequency: freq }) });
+            const resultDiv = document.getElementById('cost-result');
+            resultDiv.classList.remove('hidden');
+            resultDiv.innerHTML = `<div class="grid grid-cols-2 gap-4"><div class="p-4 rounded-xl bg-brand-50 border border-brand-200"><div class="text-slate-500 text-xs mb-1">Tahmini Aylık Maliyet</div><div class="text-3xl font-bold text-brand-700">$${res.total_monthly.toFixed(2)}</div></div><div class="p-4 rounded-xl bg-slate-50"><div class="text-slate-500 text-xs mb-1">Aylık Çalışma Sayısı</div><div class="text-2xl font-bold text-slate-800">${res.executions_per_month}</div><div class="text-slate-400 text-xs">${res.estimated_job_duration_sec}sn/iş · ${res.time_per_row_ms}ms/satır</div></div></div>`;
+        } catch (err) { alert('Maliyet hesaplama hatası: ' + err.message); }
+    }
+
+    async function downloadExport(type, modelId, submodelName) {
+        const url = `/api/models/${modelId}/export/${encodeURIComponent(submodelName)}/${type}`;
+        try {
+            const res = await fetch(url, { headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {} });
+            if (res.ok) {
+                const blob = await res.blob();
+                const link = document.createElement('a');
+                const disposition = res.headers.get('Content-Disposition') || '';
+                const filenameMatch = disposition.match(/filename="([^"]+)"/);
+                const contentType = res.headers.get('Content-Type') || '';
+                const ext = contentType.includes('zip') ? 'zip' : 'sql';
+                link.href = URL.createObjectURL(blob);
+                link.download = filenameMatch ? filenameMatch[1] : `disaaktar_${type}.${ext}`;
+                link.click();
+                URL.revokeObjectURL(link.href);
+            } else {
+                const data = await res.json();
+                alert(data.error || 'Dışa aktarma hatası');
+            }
+        } catch (err) { alert('Dışa aktarma hatası: ' + err.message); }
+    }
+
+    async function downloadCallAnalysisCSV(modelId) {
+        const url = `/api/models/${modelId}/call-analysis/download-csv`;
+        try {
+            const res = await fetch(url, { headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {} });
+            if (res.ok) {
+                const blob = await res.blob();
+                const link = document.createElement('a');
+                const disposition = res.headers.get('Content-Disposition') || '';
+                const filenameMatch = disposition.match(/filename="([^"]+)"/);
+                link.href = URL.createObjectURL(blob);
+                link.download = filenameMatch ? filenameMatch[1] : `sonuclar_${modelId.substring(0,8)}.csv`;
+                link.click();
+                URL.revokeObjectURL(link.href);
+            } else {
+                const data = await res.json();
+                alert(data.error || 'CSV indirme hatası');
+            }
+        } catch (err) { alert('CSV indirme hatası: ' + err.message); }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  DELETE MODEL
+    // ══════════════════════════════════════════════════════════
+    async function deleteModel(modelId, modelName, redirectTo) {
+        if (!confirm(`"${modelName}" modelini silmek istediğinize emin misiniz?\n\nBu işlem geri alınamaz. Model, tüm alt modeller ve eğitim verileri kalıcı olarak silinecektir.`)) return;
+        try {
+            const res = await api(`/api/models/${modelId}/delete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+            if (res.error) { alert('Silme hatası: ' + res.error); return; }
+            navigate(redirectTo || '/');
+        } catch (err) { alert('Silme hatası: ' + err.message); }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  ADMIN PANEL
+    // ══════════════════════════════════════════════════════════
+    async function renderAdmin() {
+        if (!isAdmin()) { renderNotFound(); return; }
+        app().innerHTML = `<div class="flex items-center justify-center py-20"><div class="spinner"></div></div>`;
+        const data = await api('/api/users');
+        if (data.error) { app().innerHTML = `<div class="card p-8 text-center text-slate-500">${esc(data.error)}</div>`; return; }
+
+        app().innerHTML = `
+        <div class="fade-in">
+            <div class="flex items-end justify-between mb-8">
+                <div>
+                    <h1 class="text-3xl font-bold tracking-tight text-slate-900 mb-1">Yönetim Paneli</h1>
+                    <p class="text-slate-500 text-sm">Kullanıcıları yönetin ve yeni hesaplar oluşturun</p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div class="lg:col-span-2">
+                    <div class="section-title">Kullanıcılar</div>
+                    <div class="card-flat overflow-hidden">
+                        <table class="data-table">
+                            <thead><tr><th>Kullanıcı</th><th>Rol</th><th>Oluşturulma</th><th>Oluşturan</th><th></th></tr></thead>
+                            <tbody>
+                            ${data.users.map(u => {
+                                const roleLabel = u.role === 'master_admin' ? 'Ana Yönetici' : u.role === 'admin' ? 'Yönetici' : 'Kullanıcı';
+                                const roleTag = u.role === 'master_admin' ? 'tag-purple' : u.role === 'admin' ? 'tag-blue' : 'tag-gray';
+                                const canChangeRole = u.role !== 'master_admin' && u.username !== currentUser.username;
+                                return `<tr>
+                                    <td><div class="font-medium text-sm">${esc(u.display_name)}</div><div class="text-slate-400 text-xs">@${esc(u.username)}</div></td>
+                                    <td><span class="tag ${roleTag}">${roleLabel}</span></td>
+                                    <td class="text-slate-400 text-xs">${u.created_at ? timeAgo(u.created_at) : '—'}</td>
+                                    <td class="text-slate-400 text-xs">${esc(u.created_by || '—')}</td>
+                                    <td class="text-right">
+                                        ${canChangeRole ? `<select class="input-field text-xs py-1 px-2" style="width:auto;" onchange="updateUserRole('${escAttr(u.username)}', this.value)">
+                                            <option value="user" ${u.role === 'user' ? 'selected' : ''}>Kullanıcı</option>
+                                            <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Yönetici</option>
+                                        </select>` : ''}
+                                    </td>
+                                </tr>`;
+                            }).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="section-title">Yeni Kullanıcı Oluştur</div>
+                    <div class="card p-6">
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-slate-600 mb-1">Kullanıcı Adı</label>
+                                <input class="input-field" id="new-username" placeholder="kullanici_adi">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-600 mb-1">Görünen Ad</label>
+                                <input class="input-field" id="new-displayname" placeholder="Ahmet Yılmaz">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-600 mb-1">Şifre</label>
+                                <input class="input-field" id="new-password" type="password" placeholder="En az 6 karakter">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-600 mb-1">Rol</label>
+                                <select class="input-field" id="new-role">
+                                    <option value="user">Kullanıcı</option>
+                                    <option value="admin">Yönetici</option>
+                                </select>
+                            </div>
+                            <button class="btn-primary w-full" onclick="createUser()">Kullanıcı Oluştur</button>
+                            <div id="create-user-msg" class="hidden text-sm text-center"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    async function createUser() {
+        const username = document.getElementById('new-username').value.trim();
+        const display_name = document.getElementById('new-displayname').value.trim();
+        const password = document.getElementById('new-password').value;
+        const role = document.getElementById('new-role').value;
+        const msgDiv = document.getElementById('create-user-msg');
+
+        const res = await api('/api/auth/register', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, display_name, password, role }),
+        });
+
+        msgDiv.classList.remove('hidden');
+        if (res.success) {
+            msgDiv.className = 'text-sm text-center text-brand-600';
+            msgDiv.textContent = res.message;
+            document.getElementById('new-username').value = '';
+            document.getElementById('new-displayname').value = '';
+            document.getElementById('new-password').value = '';
+            setTimeout(() => renderAdmin(), 1000);
+        } else {
+            msgDiv.className = 'text-sm text-center text-danger-500';
+            msgDiv.textContent = res.error;
+        }
+    }
+
+    async function updateUserRole(username, role) {
+        const res = await api('/api/users/update-role', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, role }),
+        });
+        if (res.error) alert(res.error);
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  SETTINGS
+    // ══════════════════════════════════════════════════════════
+    async function renderSettings() {
+        app().innerHTML = `
+        <div class="fade-in max-w-lg mx-auto">
+            <h1 class="text-3xl font-bold tracking-tight text-slate-900 mb-8">Hesap Ayarları</h1>
+            <div class="card p-6">
+                <h3 class="font-semibold text-slate-800 mb-4">Şifre Değiştir</h3>
+                <div class="space-y-4">
+                    <div><label class="block text-sm font-medium text-slate-600 mb-1">Mevcut Şifre</label><input class="input-field" id="old-pass" type="password"></div>
+                    <div><label class="block text-sm font-medium text-slate-600 mb-1">Yeni Şifre</label><input class="input-field" id="new-pass" type="password" placeholder="En az 6 karakter"></div>
+                    <button class="btn-primary w-full" onclick="changePassword()">Şifreyi Güncelle</button>
+                    <div id="pwd-msg" class="hidden text-sm text-center"></div>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    async function changePassword() {
+        const old_password = document.getElementById('old-pass').value;
+        const new_password = document.getElementById('new-pass').value;
+        const msgDiv = document.getElementById('pwd-msg');
+        const res = await api('/api/auth/change-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ old_password, new_password }) });
+        msgDiv.classList.remove('hidden');
+        if (res.success) { msgDiv.className = 'text-sm text-center text-brand-600'; msgDiv.textContent = res.message; }
+        else { msgDiv.className = 'text-sm text-center text-danger-500'; msgDiv.textContent = res.error; }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  404
+    // ══════════════════════════════════════════════════════════
+    function renderNotFound() {
+        app().innerHTML = `<div class="fade-in text-center py-20"><div class="text-6xl mb-4">🔍</div><h1 class="text-2xl font-bold text-slate-800 mb-2">Sayfa Bulunamadı</h1><p class="text-slate-500 mb-6">Aradığınız sayfa mevcut değil.</p><button class="btn-primary" onclick="navigate('/')">Ana Sayfaya Dön</button></div>`;
+    }
+    </script>
+</body>
+</html>

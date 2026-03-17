@@ -1,0 +1,28 @@
+.git
+.github
+.env
+.env.*
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+venv
+.venv
+env
+*.md
+.DS_Store
+Thumbs.db
+.vscode
+.idea
+*.egg-info
+
+# ML model dosyaları — imaja dahil edilmez, çalışma zamanında indirilir/volume'da saklanır
+data/
+*.bin
+*.pt
+*.onnx
+*.safetensors
+
+# DeployShield HTML (deployment tool, not part of the app)
+index.html
