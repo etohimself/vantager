@@ -1127,6 +1127,11 @@
             }
             try {
                 const res = await api(`/api/training/${jobId}/status`);
+                if (res.error && !res.status) {
+                    if (statusEl) statusEl.textContent = 'Sunucu yan\u0131t vermiyor. Sayfa yenileniyor...';
+                    _pollTimers.push(setTimeout(() => location.reload(), 5000));
+                    return;
+                }
                 if (res.status === 'done') {
                     if (progressEl) progressEl.style.width = '100%';
                     if (statusEl) statusEl.textContent = 'Analiz tamamland\u0131!';
@@ -1381,6 +1386,11 @@
             }
             try {
                 const res = await api(`/api/audio-evaluate/${jobId}/status`);
+                if (res.error && !res.status) {
+                    if (statusEl) statusEl.textContent = 'Sunucu yan\u0131t vermiyor. Tekrar deneniyor...';
+                    _pollTimers.push(setTimeout(poll, 5000));
+                    return;
+                }
                 if (res.status === 'done') {
                     if (barEl) barEl.style.width = '100%';
                     if (statusEl) statusEl.textContent = 'Analiz tamamland\u0131!';
@@ -1757,6 +1767,11 @@
             }
             try {
                 const res = await api(`/api/audio-predict/${jobId}/status`);
+                if (res.error && !res.status) {
+                    if (statusEl) statusEl.textContent = 'Sunucu yan\u0131t vermiyor. Tekrar deneniyor...';
+                    _pollTimers.push(setTimeout(poll, 5000));
+                    return;
+                }
                 if (res.status === 'done') {
                     if (barEl) barEl.style.width = '100%';
                     if (statusEl) statusEl.textContent = 'Tahmin tamamland\u0131!';

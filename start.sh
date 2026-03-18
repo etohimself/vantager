@@ -1,11 +1,16 @@
 #!/bin/bash
 # ── Tahmin Platformu Startup Script ──
-# Handles: Cloudflare Tunnel (optional) + Application server
+# Handles: Data dirs, ML cache, Cloudflare Tunnel, Application server
 
 set -e
 
 # Create data directories (handles both /app/data and custom DATA_DIR)
-mkdir -p "${DATA_DIR:-/app/data}"/{models,temp,stt,llm}
+DATA="${DATA_DIR:-/app/data}"
+mkdir -p "${DATA}"/{models,temp,stt,llm,cache/huggingface,cache/sentence_transformers}
+
+# Point ML model caches to DATA_DIR so they persist on mounted volumes
+export HF_HOME="${DATA}/cache/huggingface"
+export SENTENCE_TRANSFORMERS_HOME="${DATA}/cache/sentence_transformers"
 
 # ── Cloudflare Tunnel (if token provided) ──
 if [ -n "$CLOUDFLARE_TUNNEL_TOKEN" ]; then

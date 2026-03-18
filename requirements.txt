@@ -3,8 +3,8 @@
 #  Install: pip install -r requirements.txt
 # ═══════════════════════════════════════════════════════════════
 
-# ── PyTorch with CUDA 12.4 support ──
---extra-index-url https://download.pytorch.org/whl/cu124
+# ── PyTorch with CUDA 12.1 support (broadest driver compatibility) ──
+--extra-index-url https://download.pytorch.org/whl/cu121
 torch>=2.4.0,<3.0
 
 # ── AutoGluon (ML engine) ──
@@ -17,7 +17,7 @@ autogluon.multimodal>=1.2,<2.0
 
 # ── Speech-to-Text (Whisper) ──
 faster-whisper>=1.0.0,<2.0
-ctranslate2>=4.0.0,<5.0
+ctranslate2>=4.0.0,<4.5  # 4.5+ requires CUDA 12.3+ and cuDNN 9; our image has CUDA 12.1
 
 # ── Text Embeddings (NLP without heavy GPU training) ──
 sentence-transformers>=3.0.0,<4.0

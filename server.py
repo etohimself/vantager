@@ -294,14 +294,17 @@ CUDA_AVAILABLE = False
 try:
     import torch
     # Optimize Tensor Core usage on GPUs that support it (Ampere+, RTX 30xx+)
-    torch.set_float32_matmul_precision('medium')
+    try:
+        torch.set_float32_matmul_precision('medium')
+    except Exception:
+        pass  # Not supported on this GPU architecture
     CUDA_AVAILABLE = torch.cuda.is_available()
     if CUDA_AVAILABLE:
         print(f"BİLGİ: GPU algılandı — {torch.cuda.get_device_name(0)}")
     else:
         print("BİLGİ: CUDA bulunamadı. MultiModal modelleri CPU üzerinde çalışacak.")
-except ImportError:
-    print("BİLGİ: PyTorch yüklü değil. MultiModal modelleri CPU üzerinde çalışacak.")
+except (ImportError, RuntimeError):
+    print("BİLGİ: PyTorch yüklü değil veya CUDA başlatılamadı.")
 
 # ── CVE-2025-32434 Workaround ────────────────────────────────────
 # HuggingFace transformers (used by AutoGluon MultiModal) added a
@@ -460,8 +463,11 @@ except ImportError:
     print("Yüklemek için: pip install sentence-transformers")
 
 # Global sentence-transformer model cache (loaded once, reused across trainings)
-_sentence_model_cache = {}  # {model_name: {"model": SentenceTransformer, "last_used": float}}
+_sentence_model_cache = {}  # {model_name: {"model": SentenceTransformer, "last_used": float, "measured_vram_mb": int}}
 _sentence_model_lock = threading.Lock()
+
+# Prediction concurrency limiter (Solution 6: prevent concurrent VRAM explosion)
+_prediction_semaphore = threading.Semaphore(3)  # Max 3 concurrent predictions
 
 # Default embedding model: lightweight, fast, 384 dimensions, good multilingual support
 DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
@@ -489,11 +495,18 @@ def _get_sentence_model(model_name: str = None):
     # Load outside lock to avoid blocking other threads
     try:
         print(f"[Embedding] Loading sentence-transformer model: {model_name}")
+        # Measure VRAM delta during load (Solution 5)
+        _emb_before = resource_manager.get_actual_free_vram_mb()
         model = SentenceTransformer(model_name)
+        _emb_after = resource_manager.get_actual_free_vram_mb()
+        _emb_measured = max(0, _emb_before - _emb_after)
         with _sentence_model_lock:
-            _sentence_model_cache[model_name] = {"model": model, "last_used": time.time()}
+            _sentence_model_cache[model_name] = {
+                "model": model, "last_used": time.time(),
+                "measured_vram_mb": _emb_measured,
+            }
             _sentence_model_loading.discard(model_name)
-        print(f"[Embedding] Model loaded: {model_name} (dim={model.get_sentence_embedding_dimension()})")
+        print(f"[Embedding] Model loaded: {model_name} (dim={model.get_sentence_embedding_dimension()}, VRAM: {_emb_measured}MB)")
         return model
     except Exception:
         with _sentence_model_lock:
@@ -700,7 +713,10 @@ class ResourceManager:
             import torch
             if torch.cuda.is_available():
                 props = torch.cuda.get_device_properties(0)
-                self.total_vram_mb = props.total_mem // (1024 * 1024)
+                # PyTorch 2.4: total_global_mem, PyTorch 2.6+: total_memory
+                raw_vram = getattr(props, 'total_global_mem',
+                                   getattr(props, 'total_memory', 0))
+                self.total_vram_mb = raw_vram // (1024 * 1024) if raw_vram else 0
                 self.gpu_name = props.name
         except (ImportError, Exception) as e:
             log.info(f"GPU detection skipped: {e}")
@@ -733,13 +749,13 @@ class ResourceManager:
 
         # ── Known resource profiles (approximate, in MB) ──
         self.PROFILES = {
-            "whisper_gpu": {"vram_mb": 1100, "ram_mb": 500},
+            "whisper_gpu": {"vram_mb": 1500, "ram_mb": 500},
             "whisper_cpu": {"vram_mb": 0, "ram_mb": 2000},
-            "llm_external": {"vram_mb": 0, "ram_mb": 100},  # llama.cpp is a separate process
-            "training_tabular": {"vram_mb": 0, "ram_mb": 4000},
-            "training_neural": {"vram_mb": 2000, "ram_mb": 4000},
+            "llm_external": {"vram_mb": 2500, "ram_mb": 500},  # llama.cpp with CUDA (32 layers full model ≈ 2.5GB)
+            "training_tabular": {"vram_mb": 0, "ram_mb": 4000},  # num_gpus=0 → CPU only; no VRAM needed
+            "training_neural": {"vram_mb": 3000, "ram_mb": 4000},
             "prediction_light": {"vram_mb": 0, "ram_mb": 500},
-            "prediction_model_load": {"vram_mb": 0, "ram_mb": 1000},
+            "prediction_model_load": {"vram_mb": 500, "ram_mb": 1000},
             # Audio pipeline per-job overhead (whisper VRAM managed separately by _get_whisper_model)
             "audio_pipeline": {"vram_mb": 0, "ram_mb": 800},
         }
@@ -753,10 +769,22 @@ class ResourceManager:
         log.info(f"[ResourceManager] RAM: {self.total_ram_mb}MB total, "
                  f"{self.safe_ram_mb}MB safe budget, CPUs: {self.cpu_count}")
 
+    @staticmethod
+    def get_actual_free_vram_mb() -> int:
+        """Get actual free GPU VRAM in MB using CUDA driver-level query.
+        Accounts for ALL consumers: PyTorch, CTranslate2, llama.cpp subprocess."""
+        try:
+            import torch
+            if torch.cuda.is_available():
+                free, total = torch.cuda.mem_get_info(0)
+                return free // (1024 * 1024)
+        except Exception:
+            pass
+        return 0
+
     def can_acquire(self, vram_mb: int = 0, ram_mb: int = 0) -> bool:
         """Check if resources are available without actually reserving them."""
         with self._lock:
-            # Skip VRAM check if no GPU was detected (can't measure → can't gate)
             vram_ok = True if self.total_vram_mb == 0 else \
                       (self._vram_reserved_mb + vram_mb) <= self.safe_vram_mb
             ram_ok = (self._ram_reserved_mb + ram_mb) <= self.safe_ram_mb
@@ -766,18 +794,28 @@ class ResourceManager:
                     vram_mb: int = 0, ram_mb: int = 0) -> bool:
         """Try to reserve resources. Returns True if successful, False if insufficient.
 
-        VRAM gating is only enforced when a GPU was actually detected.
-        If total_vram_mb == 0, VRAM requests are accepted but tracked at 0
-        (we can't measure VRAM, so we can't meaningfully gate on it).
+        Two-layer check:
+        1. Bookkeeping: Does the reservation budget allow it?
+        2. Reality: Does the GPU actually have enough free VRAM?
+        Both must pass. This prevents OOM even if profiles underestimate usage.
         """
         with self._lock:
-            # If no GPU detected, we can't track VRAM — accept but don't reserve
             effective_vram = vram_mb if self.total_vram_mb > 0 else 0
 
+            # Layer 1: Bookkeeping check (reservation budget)
             if effective_vram > 0 and (self._vram_reserved_mb + effective_vram) > self.safe_vram_mb:
-                log.warning(f"[ResourceManager] VRAM insufficient for {task_type}: "
-                           f"need {effective_vram}MB, available {self.safe_vram_mb - self._vram_reserved_mb}MB")
+                log.warning(f"[ResourceManager] VRAM budget insufficient for {task_type}: "
+                           f"need {effective_vram}MB, budget available {self.safe_vram_mb - self._vram_reserved_mb}MB")
                 return False
+
+            # Layer 2: Reality check (actual GPU free memory)
+            if effective_vram > 0:
+                actual_free = self.get_actual_free_vram_mb()
+                # Require at least the requested VRAM + 500MB safety buffer
+                if actual_free > 0 and actual_free < (effective_vram + 500):
+                    log.warning(f"[ResourceManager] Actual GPU VRAM insufficient for {task_type}: "
+                               f"need {effective_vram}+500MB safety, actual free {actual_free}MB")
+                    return False
             if (self._ram_reserved_mb + ram_mb) > self.safe_ram_mb:
                 log.warning(f"[ResourceManager] RAM insufficient for {task_type}: "
                            f"need {ram_mb}MB, available {self.safe_ram_mb - self._ram_reserved_mb}MB")
@@ -833,6 +871,66 @@ class ResourceManager:
 
 # Global singleton — initialized at module load
 resource_manager = ResourceManager()
+
+
+def _ensure_vram_available(needed_mb: int) -> bool:
+    """Solution 7: Pre-emptive eviction — free VRAM BEFORE an operation, not after it fails.
+    Returns True if enough VRAM is available after eviction attempts."""
+    actual_free = resource_manager.get_actual_free_vram_mb()
+    if actual_free <= 0 or actual_free >= needed_mb:
+        return True  # Either no GPU detected or enough free
+
+    log.info(f"[VRAM] Need {needed_mb}MB but only {actual_free}MB free — pre-emptively evicting...")
+
+    # Priority 1: Evict idle cached prediction models (cheapest to reload)
+    try:
+        model_cache._evict_idle(min_idle_seconds=60)
+    except Exception:
+        pass
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+    actual_free = resource_manager.get_actual_free_vram_mb()
+    if actual_free >= needed_mb:
+        return True
+
+    # Priority 2: Evict idle embedding models
+    try:
+        now = time.time()
+        with _sentence_model_lock:
+            to_evict = [n for n, e in _sentence_model_cache.items()
+                       if (now - e.get("last_used", now)) > 30]
+            for name in to_evict:
+                log.info(f"[VRAM] Pre-evicted embedding model: {name}")
+                del _sentence_model_cache[name]
+    except Exception:
+        pass
+    gc.collect()
+    try:
+        torch.cuda.empty_cache()
+    except Exception:
+        pass
+    actual_free = resource_manager.get_actual_free_vram_mb()
+    if actual_free >= needed_mb:
+        return True
+
+    # Priority 3: Unload idle Whisper (frees most VRAM but expensive to reload)
+    try:
+        if _whisper_model is not None:
+            with _whisper_model_lock:
+                idle = time.time() - _whisper_last_used
+            if idle > 10:  # Only if idle for at least 10 seconds
+                log.info(f"[VRAM] Pre-evicting Whisper (idle {idle:.0f}s) to free VRAM")
+                _unload_whisper_model()
+    except Exception:
+        pass
+
+    actual_free = resource_manager.get_actual_free_vram_mb()
+    return actual_free >= needed_mb
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1492,7 +1590,7 @@ _llama_lock = threading.Lock()
 LLAMA_BUNDLED = os.environ.get("LLAMA_BUNDLED", "auto")
 LLAMA_MODEL_REPO = os.environ.get("LLAMA_MODEL_REPO", "unsloth/Qwen3.5-4B-GGUF")
 LLAMA_MODEL_FILE = os.environ.get("LLAMA_MODEL_FILE", "Qwen3.5-4B-Q4_K_M.gguf")
-LLAMA_GPU_LAYERS = os.environ.get("LLAMA_GPU_LAYERS", "99")
+LLAMA_GPU_LAYERS = os.environ.get("LLAMA_GPU_LAYERS", "auto")  # "auto" = detect from VRAM; or set manually
 LLAMA_CTX_SIZE = os.environ.get("LLAMA_CTX_SIZE", "8192")
 LLAMA_BATCH_SIZE = os.environ.get("LLAMA_BATCH_SIZE", "128")
 LLAMA_UBATCH_SIZE = os.environ.get("LLAMA_UBATCH_SIZE", "128")
@@ -1541,8 +1639,9 @@ def _download_llama_server():
         arch = "arm64" if _plat.machine() == "arm64" else "x64"
         patterns, ext = [f"macos-{arch}"], ".tar.gz"
     else:
-        patterns = (["ubuntu-x64-cuda-cu12", "ubuntu-x64"] if CUDA_AVAILABLE
-                     else ["ubuntu-x64"])
+        # Prefer pre-compiled CUDA binary from Docker build.
+        # Fallback: download CPU-only binary (no Linux CUDA binaries in releases since b8413+).
+        patterns = ["ubuntu-x64"]
         ext = ".tar.gz"
 
     asset_url = asset_name = None
@@ -1656,9 +1755,20 @@ def _start_bundled_llama():
         ld = env.get("LD_LIBRARY_PATH", "")
         env["LD_LIBRARY_PATH"] = f"{lib_dir}:{bin_dir}" + (f":{ld}" if ld else "")
 
+    # Determine GPU layers based on available VRAM
+    gpu_layers = LLAMA_GPU_LAYERS
+    if gpu_layers == "auto":
+        if resource_manager.total_vram_mb >= 6000:
+            gpu_layers = "32"  # All 32 layers on GPU (≈ 2.5GB for Qwen3.5-4B Q4)
+        elif resource_manager.total_vram_mb >= 4000:
+            gpu_layers = "22"  # Partial offload (≈ 1.5GB)
+        else:
+            gpu_layers = "0"   # CPU only
+        log.info(f"[LLM] Auto GPU layers: {gpu_layers} (VRAM: {resource_manager.total_vram_mb}MB)")
+
     cmd = [
         bin_path, "-m", model_path,
-        "--n-gpu-layers", LLAMA_GPU_LAYERS,
+        "--n-gpu-layers", gpu_layers,
         "--ctx-size", LLAMA_CTX_SIZE,
         "--batch-size", LLAMA_BATCH_SIZE,
         "--ubatch-size", LLAMA_UBATCH_SIZE,
@@ -1670,7 +1780,9 @@ def _start_bundled_llama():
 
     llama_log = LLAMA_DIR / "llama-server.log"
     LLAMA_DIR.mkdir(parents=True, exist_ok=True)
-    log.info(f"[LLM] Starting llama-server on port {port}...")
+    log.info(f"[LLM] Starting llama-server on port {port} with {gpu_layers} GPU layers...")
+    # Solution 3: Measure VRAM before llama-server starts
+    _llama_vram_before = resource_manager.get_actual_free_vram_mb()
     try:
         with _llama_lock:
             _llama_log_fh = open(str(llama_log), "w")
@@ -1709,6 +1821,12 @@ def _start_bundled_llama():
             s = _sock.create_connection(("localhost", port), timeout=2)
             s.close()
             LLAMA_CPP_URL = f"http://localhost:{port}/v1/chat/completions"
+            # Solution 3: Measure VRAM consumed by llama-server
+            _llama_vram_after = resource_manager.get_actual_free_vram_mb()
+            _llama_measured = max(0, _llama_vram_before - _llama_vram_after)
+            if _llama_measured > 0:
+                resource_manager.PROFILES["llm_external"]["vram_mb"] = _llama_measured
+                log.info(f"[LLM] Measured VRAM: {_llama_measured}MB (profile updated)")
             log.info(f"[LLM] llama-server ready (took {i+1}s)")
             return
         except (ConnectionRefusedError, OSError, _sock.timeout):
@@ -1960,6 +2078,16 @@ class ModelCache:
         finally:
             self.unmark_loading(model_id)
 
+    def _evict_idle(self, min_idle_seconds: int = 60):
+        """Evict cached models idle longer than min_idle_seconds."""
+        now = time.time()
+        with self._lock:
+            to_evict = [k for k, v in self._cache.items()
+                       if (now - v["last_used"]) > min_idle_seconds]
+            for key in to_evict:
+                self._cache.pop(key, None)
+                log.info(f"[ModelCache] Pre-evicted idle model {key[:8]}…")
+
     # ── internal ──────────────────────────────────────────────
 
     def _emergency_evict(self):
@@ -1975,6 +2103,17 @@ class ModelCache:
                 if entry:
                     print(f"[ModelCache] Emergency evicted {key[:8]}…")
                     del entry
+        # Also evict idle embedding models to free more VRAM
+        try:
+            now = time.time()
+            with _sentence_model_lock:
+                to_evict = [name for name, entry in _sentence_model_cache.items()
+                           if (now - entry.get("last_used", now)) > 60]  # Aggressive: 1 min
+                for name in to_evict:
+                    del _sentence_model_cache[name]
+                    log.info(f"[ModelCache] Emergency evicted embedding model: {name}")
+        except Exception:
+            pass
         # Nudge garbage collector
         import gc
         gc.collect()
@@ -2217,8 +2356,8 @@ def get_filtered_activity(user: dict) -> list:
     is_admin = user.get("role") in ("admin", "master_admin")
     if is_admin:
         return activity
-    # Regular users: only see public activities
-    return [a for a in activity if a.get("visibility") == "public"]
+    # Regular users: see public activities + old entries without visibility field (backward compat)
+    return [a for a in activity if a.get("visibility", "public") == "public"]
 
 
 def get_all_models() -> list:
@@ -2737,7 +2876,7 @@ default_args = {{
 dag = DAG(
     dag_id="tahmin_{model_id[:8]}_{safe_submodel}",
     default_args=default_args,
-    description="{target_col} tahmin pipeline",
+    description={json.dumps(f"{target_col} tahmin pipeline")},
     schedule_interval="@daily",
     start_date=datetime(2024, 1, 1),
     catchup=False,
@@ -2902,7 +3041,7 @@ default_args = {{
 dag = DAG(
     dag_id="ts_tahmin_{model_id[:8]}_{safe_submodel}",
     default_args=default_args,
-    description="{target_col} zaman serisi tahmin pipeline",
+    description={json.dumps(f"{target_col} zaman serisi tahmin pipeline")},
     schedule_interval="@daily",
     start_date=datetime(2024, 1, 1),
     catchup=False,
@@ -3142,14 +3281,23 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
                 eval_metric="MASE",
             )
 
-            ts_predictor.fit(
-                train_data=ts_df,
-                presets=preset if preset in ("fast_training", "medium_quality",
-                                             "high_quality", "best_quality") else "medium_quality",
-                time_limit=600,
-                verbosity=1,
-                num_gpus=0,  # CPU for tree models; GPU reserved for Whisper/LLM
-            )
+            # Hide GPU from TimeSeriesPredictor to prevent Ray/CUDA crashes
+            # (TimeSeriesPredictor doesn't support num_gpus param)
+            _ts_saved_cuda = os.environ.get("CUDA_VISIBLE_DEVICES")
+            os.environ["CUDA_VISIBLE_DEVICES"] = ""
+            try:
+                ts_predictor.fit(
+                    train_data=ts_df,
+                    presets=preset if preset in ("fast_training", "medium_quality",
+                                                 "high_quality", "best_quality") else "medium_quality",
+                    time_limit=600,
+                    verbosity=1,
+                )
+            finally:
+                if _ts_saved_cuda is not None:
+                    os.environ["CUDA_VISIBLE_DEVICES"] = _ts_saved_cuda
+                else:
+                    os.environ.pop("CUDA_VISIBLE_DEVICES", None)
 
             leaderboard = ts_predictor.leaderboard(silent=True)
             if len(leaderboard) == 0:
@@ -3331,7 +3479,7 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
         )
 
         predictor.fit(train_data=train_data, presets=preset, time_limit=600, verbosity=1,
-                      num_gpus=0)  # CPU for tree models; GPU reserved for Whisper/LLM
+                      num_gpus=0)  # GPU reserved for Whisper/LLM; tree models are CPU anyway
 
         leaderboard = predictor.leaderboard(silent=True)
         if len(leaderboard) == 0:
@@ -3437,10 +3585,17 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
         training_jobs[job_id]["status"] = "done"
         training_jobs[job_id]["model_id"] = model_id
 
+    except MemoryError:
+        training_jobs[job_id]["status"] = "error"
+        training_jobs[job_id]["error"] = "Bellek yetersiz. Daha küçük veri seti veya daha düşük kalite ayarı ile tekrar deneyin."
     except Exception as e:
         traceback.print_exc()
         training_jobs[job_id]["status"] = "error"
-        training_jobs[job_id]["error"] = _sanitize_error(e)
+        err_str = str(e).lower()
+        if "out of memory" in err_str or "cuda" in err_str:
+            training_jobs[job_id]["error"] = "GPU belleği yetersiz. Lütfen tekrar deneyin."
+        else:
+            training_jobs[job_id]["error"] = _sanitize_error(e)
         # Clean up orphan model directory if training never completed (no meta.json)
         try:
             meta_path = MODELS_DIR / model_id / "meta.json"
@@ -3452,6 +3607,14 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
         except OSError:
             pass
     finally:
+        # Free GPU memory before releasing resource tracking
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
+        except Exception:
+            pass
         model_ref_counter.release(model_id)
         resource_manager.release(resource_task_id)
         user_action_tracker.unregister(username, "training")
@@ -3472,6 +3635,7 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
 _whisper_model = None
 _whisper_model_lock = threading.Lock()
 _whisper_last_used = 0.0
+_whisper_measured_vram_mb = 0  # Measured on first load — replaces profile guess
 _WHISPER_IDLE_TIMEOUT = int(os.environ.get("WHISPER_IDLE_TIMEOUT", "300"))  # 5 min default
 
 def _get_whisper_model():
@@ -3496,17 +3660,27 @@ def _get_whisper_model():
                         whisper_uses_gpu = False
 
                 profile_name = "whisper_gpu" if whisper_uses_gpu else "whisper_cpu"
-                profile = resource_manager.get_profile(profile_name)
+                # Use measured VRAM if available, otherwise profile default
+                vram_needed = _whisper_measured_vram_mb + 200 if _whisper_measured_vram_mb > 0 \
+                    else resource_manager.PROFILES[profile_name]["vram_mb"]
+                ram_needed = resource_manager.PROFILES[profile_name]["ram_mb"]
+
+                # Solution 7: Pre-emptive eviction if VRAM is tight
+                if whisper_uses_gpu and vram_needed > 0:
+                    _ensure_vram_available(vram_needed)
+
                 if not resource_manager.try_acquire("whisper_model", "whisper_load",
-                                                     vram_mb=profile["vram_mb"],
-                                                     ram_mb=profile["ram_mb"]):
+                                                     vram_mb=vram_needed,
+                                                     ram_mb=ram_needed):
                     raise RuntimeError(
                         "Whisper modeli için yeterli kaynak yok. "
-                        f"Gereken: {profile['vram_mb']}MB VRAM, {profile['ram_mb']}MB RAM. "
+                        f"Gereken: {vram_needed}MB VRAM, {ram_needed}MB RAM. "
                         f"Cihaz: {profile_name}. "
                         "Devam eden işlerin bitmesini bekleyin."
                     )
                 try:
+                    # Solution 2: Measure VRAM delta during Whisper load
+                    _w_before = resource_manager.get_actual_free_vram_mb()
                     if os.path.isfile(os.path.join(WHISPER_MODEL_DIR, "model.bin")):
                         log.info(f"  [Whisper] Loading local model from {WHISPER_MODEL_DIR}")
                         _whisper_model = WhisperModel(WHISPER_MODEL_DIR, device=WHISPER_DEVICE,
@@ -3517,11 +3691,14 @@ def _get_whisper_model():
                         _whisper_model = WhisperModel(WHISPER_MODEL_REPO, device=WHISPER_DEVICE,
                                                        compute_type=WHISPER_COMPUTE_TYPE,
                                                        download_root=WHISPER_MODEL_DIR)
-                    log.info(f"  [Whisper] Model loaded successfully.")
+                    _w_after = resource_manager.get_actual_free_vram_mb()
+                    _whisper_measured_vram_mb = max(0, _w_before - _w_after)
+                    log.info(f"  [Whisper] Model loaded. Measured VRAM: {_whisper_measured_vram_mb}MB")
                 except Exception:
                     resource_manager.release("whisper_model")
                     raise
-    _whisper_last_used = time.time()
+    with _whisper_model_lock:
+        _whisper_last_used = time.time()
     return _whisper_model
 
 
@@ -3592,7 +3769,8 @@ def _transcribe_audio(audio_path: str, language: str) -> str:
                                        vad_filter=True, without_timestamps=True)
     transcript = " ".join(seg.text.strip() for seg in segments)
     # Keep whisper alive during batch processing
-    _whisper_last_used = time.time()
+    with _whisper_model_lock:
+        _whisper_last_used = time.time()
     return transcript
 
 
@@ -3635,6 +3813,34 @@ def _build_llm_prompt(user_prompt: str, transcript: str, schema: list) -> list:
     ]
 
 
+_llama_restarting = False  # Guard against concurrent restart attempts
+
+def _ensure_llama_running():
+    """Check if llama-server subprocess is alive; restart if crashed."""
+    global _llama_process, _llama_log_fh, _llama_restarting
+    if LLAMA_BUNDLED == "false":
+        return
+    with _llama_lock:
+        if _llama_restarting:
+            return  # Another thread is already restarting
+        if _llama_process is not None and _llama_process.poll() is not None:
+            exit_code = _llama_process.returncode
+            log.warning(f"[LLM] llama-server crashed (exit code {exit_code}) — restarting...")
+            _llama_process = None
+            if _llama_log_fh:
+                _llama_log_fh.close()
+                _llama_log_fh = None
+        if _llama_process is None:
+            _llama_restarting = True
+        else:
+            return  # Process is running fine
+    try:
+        _start_bundled_llama()
+    finally:
+        with _llama_lock:
+            _llama_restarting = False
+
+
 def _call_llm(messages: list, max_retries: int = 3) -> dict:
     """Call the local llama.cpp API and parse the JSON response.
 
@@ -3646,6 +3852,8 @@ def _call_llm(messages: list, max_retries: int = 3) -> dict:
     """
     if not REQUESTS_AVAILABLE:
         raise RuntimeError("requests yüklü değil. pip install requests")
+
+    _ensure_llama_running()
 
     payload = {
         "model": LLAMA_CPP_MODEL,
@@ -3904,8 +4112,14 @@ def audio_evaluate_pipeline(job_id: str, model_id: str, model_name: str,
                      f"{'MAE: ' + str(overall_mae) if overall_mae is not None else ''}",
                      username=username)
 
-        audio_eval_jobs[job_id]["status"] = "done"
-        audio_eval_jobs[job_id]["model_id"] = model_id
+        # Check if ALL files failed
+        failed_count = sum(1 for r in row_results if r.get("error"))
+        if failed_count == len(row_results) and len(row_results) > 0:
+            audio_eval_jobs[job_id]["status"] = "error"
+            audio_eval_jobs[job_id]["error"] = "Tüm ses dosyaları işlenemedi. GPU veya sunucu sorunu olabilir."
+        else:
+            audio_eval_jobs[job_id]["status"] = "done"
+            audio_eval_jobs[job_id]["model_id"] = model_id
 
     except Exception as e:
         traceback.print_exc()
@@ -3913,6 +4127,13 @@ def audio_evaluate_pipeline(job_id: str, model_id: str, model_name: str,
         audio_eval_jobs[job_id]["error"] = _sanitize_error(e)
 
     finally:
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
+        except Exception:
+            pass
         model_ref_counter.release(model_id)
         resource_manager.release(resource_task_id)
         user_action_tracker.unregister(username, "audio_eval")
@@ -4010,7 +4231,13 @@ def audio_predict_pipeline(job_id: str, model_id: str,
 
         audio_predict_jobs[job_id]["csv_content"] = csv_buffer.getvalue()
         audio_predict_jobs[job_id]["row_results"] = row_results
-        audio_predict_jobs[job_id]["status"] = "done"
+        # Check if ALL files failed
+        failed_count = sum(1 for r in row_results if r.get("error"))
+        if failed_count == len(row_results) and len(row_results) > 0:
+            audio_predict_jobs[job_id]["status"] = "error"
+            audio_predict_jobs[job_id]["error"] = "Tüm ses dosyaları işlenemedi."
+        else:
+            audio_predict_jobs[job_id]["status"] = "done"
 
         # Update model prediction count atomically
         updated_meta = increment_model_meta_counter(model_id, "total_predictions", len(audio_files))
@@ -4026,6 +4253,13 @@ def audio_predict_pipeline(job_id: str, model_id: str,
         audio_predict_jobs[job_id]["error"] = _sanitize_error(e)
 
     finally:
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
+        except Exception:
+            pass
         model_ref_counter.release(model_id)
         resource_manager.release(resource_task_id)
         user_action_tracker.unregister(username, "audio_predict")
@@ -4612,6 +4846,9 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
 
         add_activity("registration_request", details=f"{display_name} platforma katıldı.",
                      username=username, visibility="public")
+        add_activity("registration_detail",
+                     details=f"Yeni kayıt başvurusu: {display_name} ({email})",
+                     username=username, visibility="admin_only")
         self.send_json({"success": True, "message": "Başvurunuz alındı. Yönetici onayından sonra giriş yapabilirsiniz."})
 
     def handle_change_password(self, body):
@@ -5176,6 +5413,32 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
 
         if not model_ref_counter.acquire(model_id):
             return self.send_json({"error": "Model siliniyor, lütfen bekleyin"}, 409)
+
+        # Solution 6: Limit concurrent predictions
+        if not _prediction_semaphore.acquire(timeout=15):
+            model_ref_counter.release(model_id)
+            return self.send_json({"error": "Sunucu meşgul. Lütfen birkaç saniye bekleyin."}, 503)
+
+        # Solution 4: Use measured VRAM if available, else profile default
+        _pred_resource_id = f"predict_{uuid.uuid4().hex[:8]}"
+        _pred_vram = meta.get("measured_vram_peak_mb", resource_manager.PROFILES["prediction_model_load"]["vram_mb"])
+        _emb_entry = _sentence_model_cache.get(meta.get("embedding_model", DEFAULT_EMBEDDING_MODEL))
+        if meta.get("text_columns") and _emb_entry:
+            _pred_vram += _emb_entry.get("measured_vram_mb", 500)
+        elif meta.get("text_columns"):
+            _pred_vram += 500  # fallback for unmeasured embeddings
+
+        # Solution 7: Pre-emptive eviction if VRAM tight
+        if _pred_vram > 0:
+            _ensure_vram_available(_pred_vram + 300)
+
+        if not resource_manager.try_acquire(_pred_resource_id, "prediction_model_load",
+                                            vram_mb=_pred_vram,
+                                            ram_mb=resource_manager.PROFILES["prediction_model_load"]["ram_mb"]):
+            _prediction_semaphore.release()
+            model_ref_counter.release(model_id)
+            return self.send_json({"error": "Sunucu meşgul. Lütfen birkaç saniye bekleyip tekrar deneyin."}, 503)
+
         try:
             # ── Time Series prediction path ──
             if meta.get("task_type") == "timeseries":
@@ -5217,7 +5480,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                 forecast_records = []
                 pred_df = predictions.reset_index()
                 if len(pred_df) == 0:
-                    return self.send_json({"error": "Tahmin sonucu boş döndü"}, 500)
+                    return self.send_json({"error": "Tahmin sonucu boş döndü"}, 400)
                 for _, row in pred_df.iterrows():
                     rec = {}
                     for col in pred_df.columns:
@@ -5296,6 +5559,17 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             if hasattr(result["prediction"], 'item'):
                 result["prediction"] = result["prediction"].item()
 
+            # Solution 4: Measure peak VRAM on first prediction for this model
+            if not meta.get("measured_vram_peak_mb"):
+                try:
+                    _peak = torch.cuda.max_memory_allocated(0) // (1024 * 1024)
+                    torch.cuda.reset_peak_memory_stats(0)
+                    if _peak > 0:
+                        update_model_meta_fields(model_id, measured_vram_peak_mb=int(_peak))
+                        log.info(f"[Predict] Model {model_id[:8]} measured VRAM peak: {_peak}MB")
+                except Exception:
+                    pass
+
             increment_model_meta_counter(model_id, "total_predictions", 1)
             add_activity("predicted", model_id, meta["name"],
                         f"{submodel_name} ile tekli tahmin", username=user["username"])
@@ -5305,7 +5579,18 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             err_str = str(e).lower()
             if isinstance(e, MemoryError) or "out of memory" in err_str:
                 model_cache.evict(model_id)
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
                 self.send_json({"error": "Bellek yetersiz. Model bellekten kaldırıldı. Lütfen tekrar deneyin."}, 503)
+            elif "cuda" in err_str or "device" in err_str:
+                model_cache.evict(model_id)
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
+                self.send_json({"error": "GPU hatası oluştu. Lütfen tekrar deneyin."}, 503)
             else:
                 traceback.print_exc()
                 self.send_json({"error": self._safe_error_message(e)}, 500)
@@ -5313,6 +5598,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             traceback.print_exc()
             self.send_json({"error": self._safe_error_message(e)}, 500)
         finally:
+            resource_manager.release(_pred_resource_id)
+            _prediction_semaphore.release()
             model_ref_counter.release(model_id)
 
     def handle_predict_batch(self, model_id, submodel_name, body):
@@ -5336,6 +5623,32 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
 
         if not model_ref_counter.acquire(model_id):
             return self.send_json({"error": "Model siliniyor, lütfen bekleyin"}, 409)
+
+        # Solution 6: Limit concurrent predictions
+        if not _prediction_semaphore.acquire(timeout=15):
+            model_ref_counter.release(model_id)
+            return self.send_json({"error": "Sunucu meşgul. Lütfen birkaç saniye bekleyin."}, 503)
+
+        # Solution 4: Use measured VRAM if available
+        _bpred_resource_id = f"batch_predict_{uuid.uuid4().hex[:8]}"
+        _bp_vram = meta.get("measured_vram_peak_mb", resource_manager.PROFILES["prediction_model_load"]["vram_mb"])
+        _emb_entry_b = _sentence_model_cache.get(meta.get("embedding_model", DEFAULT_EMBEDDING_MODEL))
+        if meta.get("text_columns") and _emb_entry_b:
+            _bp_vram += _emb_entry_b.get("measured_vram_mb", 500)
+        elif meta.get("text_columns"):
+            _bp_vram += 500
+
+        # Solution 7: Pre-emptive eviction
+        if _bp_vram > 0:
+            _ensure_vram_available(_bp_vram + 300)
+
+        if not resource_manager.try_acquire(_bpred_resource_id, "prediction_model_load",
+                                            vram_mb=_bp_vram,
+                                            ram_mb=resource_manager.PROFILES["prediction_model_load"]["ram_mb"]):
+            _prediction_semaphore.release()
+            model_ref_counter.release(model_id)
+            return self.send_json({"error": "Sunucu meşgul. Lütfen birkaç saniye bekleyip tekrar deneyin."}, 503)
+
         try:
             if "multipart/form-data" in content_type:
                 boundary = self._extract_boundary(content_type)
@@ -5468,7 +5781,18 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             err_str = str(e).lower()
             if isinstance(e, MemoryError) or "out of memory" in err_str:
                 model_cache.evict(model_id)
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
                 self.send_json({"error": "Bellek yetersiz. Model bellekten kaldırıldı. Lütfen tekrar deneyin."}, 503)
+            elif "cuda" in err_str or "device" in err_str:
+                model_cache.evict(model_id)
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
+                self.send_json({"error": "GPU hatası oluştu. Lütfen tekrar deneyin."}, 503)
             else:
                 traceback.print_exc()
                 self.send_json({"error": self._safe_error_message(e)}, 500)
@@ -5476,6 +5800,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             traceback.print_exc()
             self.send_json({"error": self._safe_error_message(e)}, 500)
         finally:
+            resource_manager.release(_bpred_resource_id)
+            _prediction_semaphore.release()
             model_ref_counter.release(model_id)
 
     def handle_export_airflow(self, model_id, submodel_name):
@@ -5743,14 +6069,22 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         if visibility not in ("public", "private"):
             return self.send_json({"error": "Geçersiz görünürlük"}, 400)
 
+        old_visibility = meta.get("visibility", "private")
         was_ever_public = meta.get("_was_public", False)
         meta["visibility"] = visibility
         update_fields = {"visibility": visibility}
 
-        # Track if model was ever made public (prevents spam on toggle)
+        # Log all visibility changes for admin audit trail
+        if visibility != old_visibility:
+            label = "Herkese Açık" if visibility == "public" else "Özel"
+            add_activity("visibility_changed", model_id, meta.get("name", ""),
+                         f"Görünürlük değiştirildi: {label}", username=user["username"])
+
+        # Public announcement only on first-ever public share (prevents spam)
         if visibility == "public" and not was_ever_public:
             update_fields["_was_public"] = True
-            display_name = find_user(user["username"]).get("display_name", user["username"]) if find_user(user["username"]) else user["username"]
+            user_obj = find_user(user["username"])
+            display_name = user_obj.get("display_name", user["username"]) if user_obj else user["username"]
             add_activity("model_shared", model_id, meta.get("name", ""),
                          f"{display_name} bir model paylaştı: {meta.get('name', '')}",
                          username=user["username"], visibility="public")
@@ -6518,8 +6852,13 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                         print(f"  [Explain] SHAP computed for {submodel_name} ({len(shap_feature_cols)} features)")
                 except ImportError:
                     print("  [Explain] SHAP not installed — skipping (pip install shap)")
+                except (MemoryError, RuntimeError) as e:
+                    err_str = str(e).lower()
+                    if isinstance(e, MemoryError) or "out of memory" in err_str or "cuda" in err_str:
+                        raise  # Propagate OOM to outer handler for proper 503 response
+                    log.warning(f"[Explain] SHAP computation failed (non-fatal): {e}")
                 except Exception as e:
-                    print(f"  [Explain] SHAP computation failed (non-fatal): {e}")
+                    log.warning(f"[Explain] SHAP computation failed (non-fatal): {e}")
 
             if shap_data:
                 result["shap"] = shap_data
@@ -6625,6 +6964,18 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                         f"{submodel_name} için açıklanabilirlik analizi", username=user["username"])
             self.send_json(result)
 
+        except (MemoryError, RuntimeError) as e:
+            err_str = str(e).lower()
+            if isinstance(e, MemoryError) or "out of memory" in err_str or "cuda" in err_str:
+                model_cache.evict(model_id)
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
+                self.send_json({"error": "Bellek yetersiz. Lütfen tekrar deneyin."}, 503)
+            else:
+                traceback.print_exc()
+                self.send_json({"error": self._safe_error_message(e)}, 500)
         except Exception as e:
             traceback.print_exc()
             self.send_json({"error": self._safe_error_message(e)}, 500)
