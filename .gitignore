@@ -1,24 +1,47 @@
-# Runtime data (models, temp files, user data, GGUF, STT)
+# Runtime data (models, user data, temp files, LLM, STT)
 data/
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
 venv/
 .venv/
 env/
 *.egg-info/
+dist/
+build/
 
-# Environment
+# ML model files (too large for git)
+*.gguf
+*.bin
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.h5
+*.pkl
+
+# Environment / secrets
 .env
 .env.*
+!.env.example
 
 # IDE / OS
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+*.swp
+*~
 
-# Claude Code local settings
+# Logs
+*.log
+
+# Atomic write temp files
+*.json.tmp
+*.csv.tmp
+
+# Claude Code
 .claude/

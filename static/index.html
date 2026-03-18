@@ -112,6 +112,25 @@
         return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
+    function parseCSVLine(line) {
+        const result = [];
+        let current = '', inQuotes = false;
+        for (let i = 0; i < line.length; i++) {
+            const ch = line[i];
+            if (inQuotes) {
+                if (ch === '"' && line[i+1] === '"') { current += '"'; i++; }
+                else if (ch === '"') { inQuotes = false; }
+                else { current += ch; }
+            } else {
+                if (ch === '"') { inQuotes = true; }
+                else if (ch === ',') { result.push(current.trim()); current = ''; }
+                else { current += ch; }
+            }
+        }
+        result.push(current.trim());
+        return result;
+    }
+
     // ══════════════════════════════════════════════════════════
     //  STATE & AUTH
     // ══════════════════════════════════════════════════════════
@@ -120,6 +139,8 @@
     let chartInstances = {};
     let currentUser = null;
     let authToken = localStorage.getItem('authToken') || null;
+    let _pollTimers = [];
+    let _audioObjectURLs = [];
 
     async function api(path, opts = {}) {
         const headers = opts.headers || {};
@@ -142,7 +163,7 @@
         try {
             return await res.json();
         } catch (e) {
-            return { error: 'Bir sorun oluştu. Lütfen tekrar deneyin.' };
+            return { error: 'Sunucu yanıtı geçersiz' };
         }
     }
 
@@ -237,7 +258,7 @@
         });
     }
 
-    function destroyCharts() { Object.values(chartInstances).forEach(c => c.destroy()); chartInstances = {}; }
+    function destroyCharts() { Object.values(chartInstances).forEach(c => c.destroy()); chartInstances = {}; _pollTimers.forEach(clearTimeout); _pollTimers = []; _audioObjectURLs.forEach(u => URL.revokeObjectURL(u)); _audioObjectURLs = []; }
     function app() { return document.getElementById('app'); }
 
     function timeAgo(dateStr) {
@@ -498,7 +519,7 @@
                 </div>
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     ${data.endorsed.map(m => `
-                        <div class="featured-card cursor-pointer hover:shadow-md transition-all" onclick="navigate('/model/${m.id}/results')">
+                        <div class="featured-card cursor-pointer hover:shadow-md transition-all" onclick="navigate('/model/${escAttr(m.id)}/results')">
                             <div class="flex items-start justify-between mb-2">
                                 <div class="font-semibold text-slate-800 truncate">${esc(m.name)}</div>
                                 <span class="endorsed-badge flex items-center gap-1">
@@ -523,7 +544,7 @@
                 </div>
                 <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-3">
                     ${data.popular.map((m, i) => `
-                        <div class="stat-card cursor-pointer hover:shadow-md transition-all" onclick="navigate('/model/${m.id}/results')">
+                        <div class="stat-card cursor-pointer hover:shadow-md transition-all" onclick="navigate('/model/${escAttr(m.id)}/results')">
                             <div class="flex items-center gap-2 mb-2">
                                 <span class="text-xs font-bold text-slate-400">#${i+1}</span>
                                 <span class="font-medium text-sm text-slate-700 truncate">${esc(m.name)}</span>
@@ -581,7 +602,7 @@
                             <thead><tr><th>Analiz</th><th>Ba\u015far\u0131</th><th>Haz\u0131rlayan</th><th>Tarih</th></tr></thead>
                             <tbody>
                             ${data.recent_public.map(m => `
-                                <tr onclick="navigate('/model/${m.id}/results')">
+                                <tr onclick="navigate('/model/${escAttr(m.id)}/results')">
                                     <td>
                                         <div class="row-name font-medium text-sm transition-colors">${esc(m.name)}</div>
                                         <div class="text-slate-400 text-xs mt-0.5">${esc(m.target_column)} \u00b7 ${m.task_type === 'classification' ? 'Kategorileme' : m.task_type === 'timeseries' ? 'Gelecek Tahmini' : m.task_type === 'text' ? 'Kategorileme' : m.task_type === 'call_analysis' ? 'Ses Analizi' : 'Say\u0131sal Tahmin'} \u00b7 ${m.num_rows} sat\u0131r</div>
@@ -664,7 +685,7 @@
     function renderModelRows(models) {
         if (!models.length) return '<tr><td colspan="7" class="p-8 text-center text-slate-400">Filtrelerinize uygun analiz bulunamad\u0131</td></tr>';
         return models.map(m => `
-            <tr onclick="navigate('/model/${m.id}/results')">
+            <tr onclick="navigate('/model/${escAttr(m.id)}/results')">
                 <td>
                     <div class="flex items-center gap-2">
                         <div class="row-name font-medium text-sm transition-colors">${esc(m.name)}</div>
@@ -679,12 +700,12 @@
                 <td class="text-slate-400 text-xs">${timeAgo(m.created_at)}</td>
                 <td class="text-right" onclick="event.stopPropagation()">
                     ${m.task_type === 'call_analysis' ? `
-                        <button class="btn-sm btn-export mr-1" onclick="navigate('/model/${m.id}/predict-audio')" title="Analizi \u00c7al\u0131\u015ft\u0131r">
+                        <button class="btn-sm btn-export mr-1" onclick="navigate('/model/${escAttr(m.id)}/predict-audio')" title="Analizi \u00c7al\u0131\u015ft\u0131r">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                         </button>
                     ` : ''}
                     ${(m.owner === currentUser.username || isAdmin()) ? `
-                        <button class="btn-danger-sm" onclick="deleteModel('${m.id}', '${escAttr(m.name)}', '/library')" title="Sil">
+                        <button class="btn-danger-sm" onclick="deleteModel('${escAttr(m.id)}', '${escAttr(m.name)}', '/library')" title="Sil">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                         </button>
                     ` : ''}
@@ -967,6 +988,11 @@
     }
 
     async function processFile(file) {
+        const MAX_FILE_SIZE_MB = 200;
+        if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
+            alert(`Dosya \u00e7ok b\u00fcy\u00fck (${(file.size / 1024 / 1024).toFixed(1)}MB). Maksimum: ${MAX_FILE_SIZE_MB}MB`);
+            return;
+        }
         const formData = new FormData();
         formData.append('file', file);
         try {
@@ -1013,6 +1039,8 @@
 
     async function startTraining() {
         if (!uploadData) return;
+        const trainBtn = document.querySelector('[onclick*="startTraining"]');
+        if (trainBtn) trainBtn.disabled = true;
         const taskType = document.getElementById('task-type').value;
         const payload = {
             temp_id: uploadData.temp_id,
@@ -1034,6 +1062,7 @@
 
             if (!payload.timestamp_column) {
                 alert('Gelecek tahmini i\u00e7in bir zaman s\u00fctunu se\u00e7melisiniz.');
+                if (trainBtn) trainBtn.disabled = false;
                 return;
             }
         }
@@ -1047,6 +1076,7 @@
                 alert('Bir sorun olu\u015ftu: ' + res.error);
                 document.getElementById('train-step2').classList.remove('hidden');
                 document.getElementById('train-step3').classList.add('hidden');
+                if (trainBtn) trainBtn.disabled = false;
                 return;
             }
             pollTrainingStatus(res.job_id);
@@ -1054,20 +1084,28 @@
             alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
             document.getElementById('train-step2').classList.remove('hidden');
             document.getElementById('train-step3').classList.add('hidden');
+            if (trainBtn) trainBtn.disabled = false;
         }
     }
 
     async function pollTrainingStatus(jobId) {
+        _pollTimers.forEach(clearTimeout); _pollTimers = [];
         let progress = 10;
+        let _pollCount = 0;
+        const MAX_POLLS = 1800;
         const progressEl = document.getElementById('train-progress');
         const statusEl = document.getElementById('train-status-text');
         const poll = async () => {
+            if (++_pollCount > MAX_POLLS) {
+                if (statusEl) statusEl.textContent = '\u0130\u015flem \u00e7ok uzun s\u00fcr\u00fcyor. L\u00fctfen sayfay\u0131 yenileyip kontrol edin.';
+                return;
+            }
             try {
                 const res = await api(`/api/training/${jobId}/status`);
                 if (res.status === 'done') {
                     if (progressEl) progressEl.style.width = '100%';
                     if (statusEl) statusEl.textContent = 'Analiz tamamland\u0131!';
-                    setTimeout(() => navigate(`/model/${res.model_id}/results`), 800);
+                    _pollTimers.push(setTimeout(() => navigate(`/model/${res.model_id}/results`), 800));
                     return;
                 }
                 if (res.status === 'error') {
@@ -1094,17 +1132,17 @@
                     if (statusEl) statusEl.textContent = `S\u0131ran\u0131z: ${res.position + 1}. s\u0131rada bekliyorsunuz...`;
                     progress = Math.min(progress + 1, 15);
                     if (progressEl) progressEl.style.width = progress + '%';
-                    setTimeout(poll, 3000);
+                    _pollTimers.push(setTimeout(poll, 3000));
                     return;
                 }
                 progress = Math.min(progress + Math.random() * 8, 90);
                 if (progressEl) progressEl.style.width = progress + '%';
                 const messages = ['Veriler inceleniyor...', 'Farkl\u0131 y\u00f6ntemler deneniyor...', 'En iyi sonu\u00e7 aran\u0131yor...', 'Sonu\u00e7lar hesaplan\u0131yor...', 'Veriler temizleniyor...', 'Sonu\u00e7lar kar\u015f\u0131la\u015ft\u0131r\u0131l\u0131yor...'];
                 if (statusEl) statusEl.textContent = messages[Math.floor(Math.random() * messages.length)];
-                setTimeout(poll, 2000);
-            } catch { setTimeout(poll, 3000); }
+                _pollTimers.push(setTimeout(poll, 2000));
+            } catch { _pollTimers.push(setTimeout(poll, 3000)); }
         };
-        setTimeout(poll, 2000);
+        _pollTimers.push(setTimeout(poll, 2000));
     }
 
     // ══════════════════════════════════════════════════════════
@@ -1178,7 +1216,12 @@
     }
 
     function addAudioFiles(files) {
+        const MAX_AUDIO_SIZE_MB = 200;
         files.forEach(f => {
+            if (f.size > MAX_AUDIO_SIZE_MB * 1024 * 1024) {
+                alert(`Dosya \u00e7ok b\u00fcy\u00fck: ${esc(f.name)} (${(f.size / 1024 / 1024).toFixed(1)}MB). Maksimum: ${MAX_AUDIO_SIZE_MB}MB`);
+                return;
+            }
             if (!audioFiles.some(af => af.name === f.name)) {
                 audioFiles.push(f);
             }
@@ -1193,6 +1236,7 @@
 
     function renderAudioFilesList() {
         const container = document.getElementById('audio-files-list');
+        _audioObjectURLs.forEach(u => URL.revokeObjectURL(u)); _audioObjectURLs = [];
         if (!audioFiles.length) {
             container.innerHTML = '';
             return;
@@ -1202,6 +1246,7 @@
         html += '<div class="space-y-3">';
         audioFiles.forEach((f, idx) => {
             const url = URL.createObjectURL(f);
+            _audioObjectURLs.push(url);
             const sizeMB = (f.size / 1024 / 1024).toFixed(1);
             html += `<div class="border border-slate-200 rounded-xl p-4 bg-slate-25">
                 <div class="flex items-center gap-3 mb-3">
@@ -1299,18 +1344,27 @@
     }
 
     async function pollAudioEvalStatus(jobId) {
+        _pollTimers.forEach(clearTimeout); _pollTimers = [];
+        let _pollCount = 0;
+        const MAX_POLLS = 1800;
         const barEl = document.getElementById('audio-eval-bar');
         const statusEl = document.getElementById('audio-eval-status-text');
         const poll = async () => {
+            if (++_pollCount > MAX_POLLS) {
+                if (statusEl) statusEl.textContent = '\u0130\u015flem \u00e7ok uzun s\u00fcr\u00fcyor. L\u00fctfen sayfay\u0131 yenileyip kontrol edin.';
+                return;
+            }
             try {
                 const res = await api(`/api/audio-evaluate/${jobId}/status`);
                 if (res.status === 'done') {
                     if (barEl) barEl.style.width = '100%';
                     if (statusEl) statusEl.textContent = 'Analiz tamamland\u0131!';
-                    setTimeout(() => navigate(`/model/${res.model_id}/results`), 800);
+                    _pollTimers.push(setTimeout(() => navigate(`/model/${res.model_id}/results`), 800));
                     return;
                 }
                 if (res.status === 'error') {
+                    const evalRetryBtn = document.getElementById('start-audio-eval-btn');
+                    if (evalRetryBtn) evalRetryBtn.classList.remove('hidden');
                     if (statusEl) statusEl.textContent = 'Bir sorun olu\u015ftu: ' + (res.error || 'Bilinmeyen');
                     if (barEl) barEl.style.background = '#EF4444';
                     return;
@@ -1318,19 +1372,19 @@
                 if (res.position != null && res.position >= 0) {
                     if (statusEl) statusEl.textContent = `S\u0131ran\u0131z: ${res.position + 1}. s\u0131rada bekliyorsunuz...`;
                     if (barEl) barEl.style.width = '5%';
-                    setTimeout(poll, 3000);
+                    _pollTimers.push(setTimeout(poll, 3000));
                     return;
                 }
-                const total = res.total || 1;
+                const total = Math.max(1, res.total || 0);
                 const processed = res.processed || 0;
-                const pct = Math.max(5, Math.round((processed / total) * 100));
+                const pct = Math.min(100, Math.max(5, Math.round((processed / total) * 100)));
                 if (barEl) barEl.style.width = pct + '%';
                 const msgs = ['Ses kayd\u0131 yaz\u0131ya d\u00f6k\u00fcl\u00fcyor...', 'Konu\u015fma metni \u00e7\u0131kar\u0131l\u0131yor...', 'De\u011ferlendirme yap\u0131l\u0131yor...', 'Sonu\u00e7lar hesaplan\u0131yor...'];
                 if (statusEl) statusEl.textContent = `${processed}/${total} dosya i\u015flendi \u2014 ${msgs[Math.floor(Math.random() * msgs.length)]}`;
-                setTimeout(poll, 2500);
-            } catch { setTimeout(poll, 3000); }
+                _pollTimers.push(setTimeout(poll, 2500));
+            } catch { _pollTimers.push(setTimeout(poll, 3000)); }
         };
-        setTimeout(poll, 2000);
+        _pollTimers.push(setTimeout(poll, 2000));
     }
 
     // ══════════════════════════════════════════════════════════
@@ -1370,7 +1424,7 @@
             schema.forEach(v => {
                 const actual = (r.actuals || {})[v.name] != null ? (r.actuals || {})[v.name] : '\u2014';
                 const pred = (r.predicted || {})[v.name] != null ? (r.predicted || {})[v.name] : '\u2014';
-                const match = v.type === 'classification'
+                const match = v.type === 'classification' && actual != null && pred != null && actual !== '\u2014' && pred !== '\u2014'
                     ? String(actual).toLowerCase().trim() === String(pred).toLowerCase().trim()
                     : false;
                 cellsHtml += '<td class="text-xs font-mono">' + esc(actual) + '</td>';
@@ -1417,15 +1471,15 @@
                         <p class="text-slate-400 text-xs mt-1">Haz\u0131rlayan: ${esc(model.owner || '\u2014')} \xb7 ${model.created_at ? new Date(model.created_at).toLocaleString('tr-TR') : ''}</p>
                     </div>
                     <div class="flex gap-2 flex-shrink-0">
-                        <button class="btn-primary btn-sm flex items-center gap-1.5" onclick="navigate('/model/${model.id}/predict-audio')">
+                        <button class="btn-primary btn-sm flex items-center gap-1.5" onclick="navigate('/model/${escAttr(model.id)}/predict-audio')">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                             Yeni Analiz \u00c7al\u0131\u015ft\u0131r
                         </button>
-                        <button class="btn-secondary btn-sm flex items-center gap-1.5" onclick="downloadCallAnalysisCSV('${model.id}')">
+                        <button class="btn-secondary btn-sm flex items-center gap-1.5" onclick="downloadCallAnalysisCSV('${escAttr(model.id)}')">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                             Sonu\u00e7lar\u0131 CSV \u0130ndir
                         </button>
-                        ${isOwnerOrAdmin ? `<button class="btn-danger-sm" onclick="deleteModel('${model.id}', '${escAttr(model.name)}')">Sil</button>` : ''}
+                        ${isOwnerOrAdmin ? `<button class="btn-danger-sm" onclick="deleteModel('${escAttr(model.id)}', '${escAttr(model.name)}')">Sil</button>` : ''}
                     </div>
                 </div>
             </div>
@@ -1465,7 +1519,7 @@
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                         Nas\u0131l Karar Veriyor?
                     </h3>
-                    <button class="btn-primary btn-sm" id="run-ca-explain-btn" onclick="loadExplainability('${model.id}', 'LLM-as-a-Judge')">Analizi Ba\u015flat</button>
+                    <button class="btn-primary btn-sm" id="run-ca-explain-btn" onclick="loadExplainability('${escAttr(model.id)}', 'LLM-as-a-Judge')">Analizi Ba\u015flat</button>
                 </div>
             </div>
             <div id="ca-explain-result"></div>` : ''}
@@ -1497,7 +1551,7 @@
             <div class="text-sm text-slate-400 mb-4 flex items-center gap-1.5">
                 <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/')">Ana Sayfa</span><span>\u203a</span>
                 <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/library')">Analizlerim</span><span>\u203a</span>
-                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/model/${modelId}/results')">${esc(model.name)}</span><span>\u203a</span>
+                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/model/${escAttr(modelId)}/results')">${esc(model.name)}</span><span>\u203a</span>
                 <span class="text-slate-600">Tahmin</span>
             </div>
 
@@ -1554,7 +1608,7 @@
                 <div id="predict-audio-files-list"></div>
             </div>
 
-            <button class="btn-primary w-full text-center flex items-center justify-center gap-2 py-3 mb-6" id="start-audio-predict-btn" onclick="startAudioPrediction('${modelId}')">
+            <button class="btn-primary w-full text-center flex items-center justify-center gap-2 py-3 mb-6" id="start-audio-predict-btn" onclick="startAudioPrediction('${escAttr(modelId)}')">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                 Analizi Ba\u015flat
             </button>
@@ -1591,7 +1645,12 @@
     }
 
     function addPredictAudioFiles(files) {
+        const MAX_AUDIO_SIZE_MB = 200;
         files.forEach(f => {
+            if (f.size > MAX_AUDIO_SIZE_MB * 1024 * 1024) {
+                alert(`Dosya \u00e7ok b\u00fcy\u00fck: ${esc(f.name)} (${(f.size / 1024 / 1024).toFixed(1)}MB). Maksimum: ${MAX_AUDIO_SIZE_MB}MB`);
+                return;
+            }
             if (!predictAudioFiles.some(af => af.name === f.name)) {
                 predictAudioFiles.push(f);
             }
@@ -1606,10 +1665,12 @@
 
     function renderPredictAudioFilesList() {
         const container = document.getElementById('predict-audio-files-list');
+        _audioObjectURLs.forEach(u => URL.revokeObjectURL(u)); _audioObjectURLs = [];
         if (!predictAudioFiles.length) { container.innerHTML = ''; return; }
         let html = `<div class="text-xs text-slate-500 mb-2 font-semibold uppercase tracking-wider">${predictAudioFiles.length} dosya y\u00fcklendi</div><div class="space-y-2">`;
         predictAudioFiles.forEach((f, idx) => {
             const url = URL.createObjectURL(f);
+            _audioObjectURLs.push(url);
             const sizeMB = (f.size / 1024 / 1024).toFixed(1);
             html += `<div class="flex items-center gap-3 border border-slate-200 rounded-lg p-3 bg-slate-25">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
@@ -1624,6 +1685,9 @@
 
     async function startAudioPrediction(modelId) {
         if (!predictAudioFiles.length) return alert('En az bir ses dosyas\u0131 y\u00feklemelisiniz.');
+
+        const predictBtn = document.getElementById('start-audio-predict-btn');
+        if (predictBtn) predictBtn.disabled = true;
 
         const fd = new FormData();
         predictAudioFiles.forEach(f => fd.append('audio_files', f, f.name));
@@ -1642,6 +1706,7 @@
                 alert('Bir sorun olu\u015ftu: ' + data.error);
                 document.getElementById('start-audio-predict-btn').classList.remove('hidden');
                 document.getElementById('audio-predict-progress').classList.add('hidden');
+                if (predictBtn) predictBtn.disabled = false;
                 return;
             }
             pollAudioPredictStatus(data.job_id, modelId);
@@ -1649,20 +1714,28 @@
             alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
             document.getElementById('start-audio-predict-btn').classList.remove('hidden');
             document.getElementById('audio-predict-progress').classList.add('hidden');
+            if (predictBtn) predictBtn.disabled = false;
         }
     }
 
     async function pollAudioPredictStatus(jobId, modelId) {
+        _pollTimers.forEach(clearTimeout); _pollTimers = [];
+        let _pollCount = 0;
+        const MAX_POLLS = 1800;
         const barEl = document.getElementById('audio-predict-bar');
         const statusEl = document.getElementById('audio-predict-status-text');
 
         const poll = async () => {
+            if (++_pollCount > MAX_POLLS) {
+                if (statusEl) statusEl.textContent = '\u0130\u015flem \u00e7ok uzun s\u00fcr\u00fcyor. L\u00fctfen sayfay\u0131 yenileyip kontrol edin.';
+                return;
+            }
             try {
                 const res = await api(`/api/audio-predict/${jobId}/status`);
                 if (res.status === 'done') {
                     if (barEl) barEl.style.width = '100%';
                     if (statusEl) statusEl.textContent = 'Tahmin tamamland\u0131!';
-                    setTimeout(() => showAudioPredictResults(jobId, res.row_results || [], modelId), 600);
+                    _pollTimers.push(setTimeout(() => showAudioPredictResults(jobId, res.row_results || [], modelId), 600));
                     return;
                 }
                 if (res.status === 'error') {
@@ -1671,16 +1744,16 @@
                     document.getElementById('start-audio-predict-btn').classList.remove('hidden');
                     return;
                 }
-                const total = res.total || 1;
+                const total = Math.max(1, res.total || 0);
                 const processed = res.processed || 0;
-                const pct = Math.max(5, Math.round((processed / total) * 100));
+                const pct = Math.min(100, Math.max(5, Math.round((processed / total) * 100)));
                 if (barEl) barEl.style.width = pct + '%';
                 const msgs = ['Ses kayd\u0131 yaz\u0131ya d\u00f6k\u00fcl\u00fcyor...', 'Konu\u015fma metni \u00e7\u0131kar\u0131l\u0131yor...', 'De\u011ferlendirme yap\u0131l\u0131yor...', 'Sonu\u00e7lar hesaplan\u0131yor...'];
                 if (statusEl) statusEl.textContent = `${processed}/${total} dosya i\u015flendi \u2014 ${msgs[Math.floor(Math.random() * msgs.length)]}`;
-                setTimeout(poll, 2500);
-            } catch { setTimeout(poll, 3000); }
+                _pollTimers.push(setTimeout(poll, 2500));
+            } catch { _pollTimers.push(setTimeout(poll, 3000)); }
         };
-        setTimeout(poll, 2000);
+        _pollTimers.push(setTimeout(poll, 2000));
     }
 
     function showAudioPredictResults(jobId, rowResults, modelId) {
@@ -1723,7 +1796,7 @@
                     </div>
                     <div class="ml-auto">
                         <a href="${API}/api/audio-predict/${jobId}/download-csv" class="btn-primary flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold no-underline" target="_blank"
-                           ${authToken ? `onclick="event.preventDefault(); downloadAudioPredictCSV('${jobId}')"` : ''}>
+                           ${authToken ? `onclick="event.preventDefault(); downloadAudioPredictCSV('${escAttr(jobId)}')"` : ''}>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                             CSV \u0130ndir
                         </a>
@@ -1744,7 +1817,7 @@
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
                     Yeni Tahmin Yap
                 </button>
-                <button class="btn-secondary" onclick="navigate('/model/${modelId}/results')">Analize D\u00f6n</button>
+                <button class="btn-secondary" onclick="navigate('/model/${escAttr(modelId)}/results')">Analize D\u00f6n</button>
             </div>
         `;
     }
@@ -1813,17 +1886,17 @@
                     </div>
                     <div class="flex gap-2 flex-shrink-0">
                         ${isOwnerOrAdmin ? `
-                            <select class="input-field text-xs py-1.5 px-3" style="width:auto;" onchange="setVisibility('${modelId}', this.value)">
+                            <select class="input-field text-xs py-1.5 px-3" style="width:auto;" onchange="setVisibility('${escAttr(modelId)}', this.value)">
                                 <option value="public" ${model.visibility !== 'private' ? 'selected' : ''}>Herkese A\u00e7\u0131k</option>
                                 <option value="private" ${model.visibility === 'private' ? 'selected' : ''}>\u00d6zel</option>
                             </select>
                         ` : ''}
                         ${isAdmin() ? `
-                            <button class="btn-sm ${model.endorsed ? 'btn-danger-sm' : 'btn-export'}" onclick="toggleEndorse('${modelId}', ${!model.endorsed})">
+                            <button class="btn-sm ${model.endorsed ? 'btn-danger-sm' : 'btn-export'}" onclick="toggleEndorse('${escAttr(modelId)}', ${!model.endorsed})">
                                 ${model.endorsed ? 'Onay\u0131 Kald\u0131r' : 'Onayla'}
                             </button>
                         ` : ''}
-                        ${isOwnerOrAdmin ? `<button class="btn-danger-sm" onclick="deleteModel('${modelId}', '${escAttr(model.name)}')">Sil</button>` : ''}
+                        ${isOwnerOrAdmin ? `<button class="btn-danger-sm" onclick="deleteModel('${escAttr(modelId)}', '${escAttr(model.name)}')">Sil</button>` : ''}
                     </div>
                 </div>
             </div>
@@ -1854,7 +1927,7 @@
                         const ofFlag = overfit > 0.05 ? '<span class="tag tag-red text-xs ml-1" title="\u0130\u00e7 skor test skorundan \u00e7ok y\u00fcksek \u2014 a\u015f\u0131r\u0131 \u00f6\u011frenme olabilir">\u26a0</span>' : '';
                         const autoTag = sm.airflow_support.supported ? '<span class="tag tag-green">Destekleniyor</span>' : '<span class="tag tag-gray">Desteklenmiyor</span>';
                         return `
-                        <tr onclick="navigate('/model/${modelId}/predict/${encodeURIComponent(sm.name)}')">
+                        <tr onclick="navigate('/model/${escAttr(modelId)}/predict/${encodeURIComponent(sm.name)}')">
                             <td>
                                 <div class="flex items-center gap-2">
                                     ${i === 0 ? '<span class="tag tag-green text-xs">En \u0130yi</span>' : ''}
@@ -1863,12 +1936,12 @@
                             </td>
                             <td>
                                 <div class="${scoreColor(sm.score, model.task_type)} font-mono text-sm font-bold">${formatScore(sm.score, model.task_type)}</div>
-                                ${sm.ci_low != null ? '<div class="text-slate-400 font-mono" style="font-size:10px;">%' + (sm.ci_low * 100).toFixed(0) + '\u2013' + (sm.ci_high * 100).toFixed(0) + ' GA</div>' : ''}
+                                ${sm.ci_low != null ? '<div class="text-slate-400 font-mono" style="font-size:10px;">%' + ((sm.ci_low || 0) * 100).toFixed(0) + '\u2013' + ((sm.ci_high || 0) * 100).toFixed(0) + ' GA</div>' : ''}
                             </td>
-                            <td class="font-mono text-sm text-slate-500">${isTS ? sm.score_internal.toFixed(2) : '%' + ((sm.score_internal || 0) * 100).toFixed(1)}${ofFlag}</td>
+                            <td class="font-mono text-sm text-slate-500">${isTS ? (sm.score_internal || 0).toFixed(2) : '%' + ((sm.score_internal || 0) * 100).toFixed(1)}${ofFlag}</td>
                             <td>${autoTag}</td>
                             <td class="text-right" onclick="event.stopPropagation()">
-                                <button class="btn-export btn-sm" onclick="navigate('/model/${modelId}/export/${encodeURIComponent(sm.name)}')">Kullan</button>
+                                <button class="btn-export btn-sm" onclick="navigate('/model/${escAttr(modelId)}/export/${encodeURIComponent(sm.name)}')">Kullan</button>
                             </td>
                         </tr>`;
                     }).join('')}
@@ -1882,7 +1955,7 @@
 
     function renderResultsChart(submodels, taskType) {
         const ctx = document.getElementById('results-chart');
-        if (!ctx) return;
+        if (!ctx) return; // canvas element guaranteed by template; null check is sufficient
         const isTS = taskType === 'timeseries';
 
         // For timeseries (MASE, lower=better): sort ascending so best is on top visually
@@ -1936,7 +2009,8 @@
         app().innerHTML = `<div class="flex items-center justify-center py-20"><div class="spinner"></div></div>`;
         const model = await api(`/api/models/${modelId}`);
         if (model.error) return renderNotFound();
-        const sm = model.submodels.find(s => s.name === submodelName);
+        const sm = (model.submodels || []).find(s => s.name === submodelName);
+        if (!sm) return renderNotFound();
         const features = model.feature_columns || [];
         const isOwnerOrAdmin = model.owner === currentUser.username || isAdmin();
 
@@ -1944,7 +2018,7 @@
         <div class="fade-in max-w-4xl mx-auto">
             <div class="text-sm text-slate-400 mb-4 flex items-center gap-1.5">
                 <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/')">Ana Sayfa</span><span>\u203a</span>
-                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/model/${modelId}/results')">${esc(model.name)}</span><span>\u203a</span>
+                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/model/${escAttr(modelId)}/results')">${esc(model.name)}</span><span>\u203a</span>
                 <span class="text-slate-600">${esc(submodelName)}</span>
             </div>
 
@@ -1956,7 +2030,7 @@
                         \u00b7 Hedef: <span class="font-mono text-slate-700">${esc(model.target_column)}</span>
                     </p>
                 </div>
-                <button class="btn-export btn-sm" onclick="navigate('/model/${modelId}/export/${encodeURIComponent(submodelName)}')">Kullan</button>
+                <button class="btn-export btn-sm" onclick="navigate('/model/${escAttr(modelId)}/export/${encodeURIComponent(submodelName)}')">Kullan</button>
             </div>
 
             <div class="flex gap-1 mb-6 p-1 rounded-xl bg-slate-100">
@@ -1977,16 +2051,16 @@
                     ${!model.model_loaded ? `
                     <div class="p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-700 mb-4" id="ts-load-banner">
                         <strong>Analiz hen\u00fcz haz\u0131r de\u011fil.</strong> Tahmin yapabilmek i\u00e7in bir seferlik haz\u0131rlamak gerekir, ard\u0131ndan h\u0131zl\u0131ca kullan\u0131labilir.
-                        <button class="ml-2 px-3 py-1 rounded bg-amber-600 text-white text-xs font-semibold hover:bg-amber-700" onclick="loadModelForTimeseries('${modelId}', '${escAttr(submodelName)}', this)">Haz\u0131rla (ilk seferde 1-2 dk. s\u00fcrer)</button>
+                        <button class="ml-2 px-3 py-1 rounded bg-amber-600 text-white text-xs font-semibold hover:bg-amber-700" onclick="loadModelForTimeseries('${escAttr(modelId)}', '${escAttr(submodelName)}', this)">Haz\u0131rla (ilk seferde 1-2 dk. s\u00fcrer)</button>
                     </div>` : ''}
                     <div class="upload-zone" onclick="document.getElementById('ts-history-file').click()"
                          ondragover="event.preventDefault(); this.classList.add('dragover')"
                          ondragleave="this.classList.remove('dragover')"
-                         ondrop="event.preventDefault(); const f=event.dataTransfer.files[0]; if(f) runTimeSeriesPrediction(f, '${modelId}', '${escAttr(submodelName)}')">
+                         ondrop="event.preventDefault(); const f=event.dataTransfer.files[0]; if(f) runTimeSeriesPrediction(f, '${escAttr(modelId)}', '${escAttr(submodelName)}')">
                         <svg class="mx-auto mb-3" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                         <p class="text-slate-600 font-medium">Ge\u00e7mi\u015f veri CSV'sini s\u00fcr\u00fckleyin veya t\u0131klayarak se\u00e7in</p>
                     </div>
-                    <input type="file" id="ts-history-file" accept=".csv" class="hidden" onchange="runTimeSeriesPrediction(this.files[0], '${modelId}', '${escAttr(submodelName)}')">
+                    <input type="file" id="ts-history-file" accept=".csv" class="hidden" onchange="runTimeSeriesPrediction(this.files[0], '${escAttr(modelId)}', '${escAttr(submodelName)}')">
                 </div>
                 <div id="single-result" class="hidden">
                     <div class="card p-6" style="background: linear-gradient(135deg, #EFF6FF, #fff); border-color: #93C5FD;">
@@ -2006,7 +2080,7 @@
                         `).join('')}
                     </div>
                     <button class="btn-primary w-full mt-5" id="predict-btn"
-                        onclick="${model.model_loaded ? `runSinglePrediction('${modelId}', '${escAttr(submodelName)}')` : `loadModelThenEnable('${modelId}', '${escAttr(submodelName)}')`}">
+                        onclick="${model.model_loaded ? `runSinglePrediction('${escAttr(modelId)}', '${escAttr(submodelName)}')` : `loadModelThenEnable('${escAttr(modelId)}', '${escAttr(submodelName)}')`}">
                         ${model.model_loaded ? 'Tahmin Et' : 'Haz\u0131rla (ilk seferde 1-2 dk. s\u00fcrer)'}
                     </button>
                     ${!model.model_loaded ? '<p class="text-xs text-slate-400 mt-2 text-center">Tahmin yapabilmek i\u00e7in bir seferlik haz\u0131rlamak gerekir, ard\u0131ndan h\u0131zl\u0131ca kullan\u0131labilir.</p>' : ''}
@@ -2027,11 +2101,11 @@
                     <div class="upload-zone" onclick="document.getElementById('batch-file').click()"
                          ondragover="event.preventDefault(); this.classList.add('dragover')"
                          ondragleave="this.classList.remove('dragover')"
-                         ondrop="handleBatchDrop(event, '${modelId}', '${escAttr(submodelName)}')">
+                         ondrop="handleBatchDrop(event, '${escAttr(modelId)}', '${escAttr(submodelName)}')">
                         <svg class="mx-auto mb-3" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                         <p class="text-slate-600 font-medium">CSV s\u00fcr\u00fckleyin veya t\u0131klayarak se\u00e7in</p>
                     </div>
-                    <input type="file" id="batch-file" accept=".csv" class="hidden" onchange="runBatchPrediction(this, '${modelId}', '${escAttr(submodelName)}')">
+                    <input type="file" id="batch-file" accept=".csv" class="hidden" onchange="runBatchPrediction(this, '${escAttr(modelId)}', '${escAttr(submodelName)}')">
                 </div>
                 <div id="batch-result" class="hidden"><div class="card p-6 text-center" id="batch-result-content"></div></div>
             </div>
@@ -2040,7 +2114,7 @@
                 <div class="card p-6 mb-6">
                     <div class="flex items-center justify-between mb-4">
                         <h3 class="font-semibold text-slate-800">Nas\u0131l Karar Veriyor?</h3>
-                        <button class="btn-primary btn-sm" id="run-explain-btn" onclick="loadExplainability('${modelId}', '${escAttr(submodelName)}')">Analizi Ba\u015flat</button>
+                        <button class="btn-primary btn-sm" id="run-explain-btn" onclick="loadExplainability('${escAttr(modelId)}', '${escAttr(submodelName)}')">Analizi Ba\u015flat</button>
                     </div>
                     <p class="text-slate-500 text-sm">Tahminleri hangi bilgilerin y\u00f6nlendirdi\u011fini \u00f6\u011frenin.</p>
                 </div>
@@ -2117,7 +2191,7 @@
             btn.textContent = 'Tahmin Et';
             btn.disabled = false;
             btn.style.opacity = '1';
-            btn.setAttribute('onclick', `runSinglePrediction('${modelId}', '${escAttr(submodelName)}')`);
+            btn.setAttribute('onclick', `runSinglePrediction('${escAttr(modelId)}', '${escAttr(submodelName)}')`);
             // Remove the note
             const note = btn.nextElementSibling;
             if (note && note.tagName === 'P') note.remove();
@@ -2157,7 +2231,7 @@
             const predVal = res.prediction !== null && res.prediction !== undefined ? res.prediction : 'N/A';
             let html = warningHtml + `<div class="text-3xl font-bold text-slate-800 mb-3">${esc(predVal)}</div>`;
 
-            if (res.probabilities) {
+            if (res.probabilities && typeof res.probabilities === 'object') {
                 html += '<div class="space-y-2 mt-4"><div class="text-sm text-slate-500 mb-2">G\u00fcven Skorlar\u0131:</div>';
                 Object.entries(res.probabilities).sort((a, b) => b[1] - a[1]).forEach(([cls, prob]) => {
                     const safePct = (prob !== null && isFinite(prob)) ? (prob * 100).toFixed(1) : '0.0';
@@ -2184,10 +2258,10 @@
                 contentDiv.innerHTML = '<p class="text-danger-500">CSV en az 1 ba\u015fl\u0131k ve 1 veri sat\u0131r\u0131 i\u00e7ermelidir.</p>';
                 return;
             }
-            const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+            const headers = parseCSVLine(lines[0]);
             const history = [];
             for (let i = 1; i < lines.length; i++) {
-                const vals = lines[i].split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+                const vals = parseCSVLine(lines[i]);
                 const row = {};
                 headers.forEach((h, idx) => {
                     let v = vals[idx] || '';
@@ -2299,7 +2373,7 @@
             }
             const topN = fi.slice(0, 15);
             let html = `<div class="card p-6 mb-6"><h3 class="font-semibold text-slate-800 mb-4 flex items-center gap-2">Hangi Bilgiler Etkili? <span class="tag tag-green text-xs">${esc(res.method || '')}</span></h3><div class="space-y-2">${topN.map((f, i) => {
-                const pct = (f.importance * 100).toFixed(0);
+                const pct = Math.max(0, Math.min(100, ((f.importance || 0) * 100))).toFixed(0);
                 return `<div class="flex items-center gap-3"><span class="text-xs text-slate-400 w-5 text-right font-bold">${i+1}</span><span class="text-sm font-mono w-44 truncate text-slate-700" title="${esc(f.feature)}">${esc(f.feature)}</span><div class="flex-1 h-6 rounded overflow-hidden bg-slate-100"><div class="h-full rounded" style="width: ${pct}%; background: linear-gradient(90deg, #10B981, #34D399); min-width: 2px;"></div></div><span class="text-xs font-mono w-12 text-right text-slate-500">%${pct}</span></div>`;
             }).join('')}</div></div>`;
 
@@ -2309,7 +2383,7 @@
                 html += `<div class="card p-6 mb-6"><h3 class="font-semibold text-slate-800 mb-4 flex items-center gap-2">Derinlemesine Analiz <span class="tag tag-blue text-xs">${esc(res.shap.method || 'SHAP')}</span></h3>
                     <p class="text-xs text-slate-400 mb-3">Her bilginin sonuca ne kadar etki etti\u011fini g\u00f6sterir.</p>
                     <div class="space-y-2">${shapItems.map((f, i) => {
-                        const pct = (f.importance * 100).toFixed(0);
+                        const pct = Math.max(0, Math.min(100, ((f.importance || 0) * 100))).toFixed(0);
                         return `<div class="flex items-center gap-3"><span class="text-xs text-slate-400 w-5 text-right font-bold">${i+1}</span><span class="text-sm font-mono w-44 truncate text-slate-700" title="${esc(f.feature)}">${esc(f.feature)}</span><div class="flex-1 h-6 rounded overflow-hidden bg-slate-100"><div class="h-full rounded" style="width: ${pct}%; background: linear-gradient(90deg, #3B82F6, #60A5FA); min-width: 2px;"></div></div><span class="text-xs font-mono w-12 text-right text-slate-500">%${pct}</span></div>`;
                     }).join('')}</div></div>`;
             }
@@ -2516,10 +2590,11 @@
                 <h3 class="font-semibold text-slate-800 mb-4 text-sm">Y\u00f6ntem Performans Kar\u015f\u0131la\u015ft\u0131rmas\u0131</h3>
                 <div class="space-y-2">
                     ${models.map((m, i) => {
-                        const maxMase = Math.max(...models.map(x => x.mase), 1);
-                        const pct = Math.round((m.mase / maxMase) * 100);
-                        const col = m.mase <= 0.5 ? '#10B981' : m.mase <= 1.0 ? '#059669' : m.mase <= 2.0 ? '#F97316' : '#EF4444';
-                        return `<div class="flex items-center gap-3"><span class="text-xs text-slate-400 w-5 text-right font-bold">${i+1}</span><span class="text-xs font-mono w-48 truncate text-slate-700">${esc(m.name)}</span><div class="flex-1 h-5 rounded overflow-hidden bg-slate-100"><div class="h-full rounded" style="width:${pct}%;background:${col};min-width:4px;"></div></div><span class="text-xs font-mono w-12 text-right font-bold" style="color:${col}">${m.mase.toFixed(2)}</span></div>`;
+                        const mase = m.mase || 0;
+                        const maxMase = Math.max(...models.map(x => x.mase || 0), 1);
+                        const pct = Math.round((mase / maxMase) * 100);
+                        const col = mase <= 0.5 ? '#10B981' : mase <= 1.0 ? '#059669' : mase <= 2.0 ? '#F97316' : '#EF4444';
+                        return `<div class="flex items-center gap-3"><span class="text-xs text-slate-400 w-5 text-right font-bold">${i+1}</span><span class="text-xs font-mono w-48 truncate text-slate-700">${esc(m.name)}</span><div class="flex-1 h-5 rounded overflow-hidden bg-slate-100"><div class="h-full rounded" style="width:${pct}%;background:${col};min-width:4px;"></div></div><span class="text-xs font-mono w-12 text-right font-bold" style="color:${col}">${mase.toFixed(2)}</span></div>`;
                     }).join('')}
                 </div>
                 <div class="mt-3 p-3 rounded-lg bg-blue-50 border border-blue-100">
@@ -2544,10 +2619,10 @@
 
         // ── Render Charts ──
         const seriesData = res.series_data || {};
-        const timestamps = (seriesData.timestamps || []).map(t => t.substring(0, 10));
+        const timestamps = (seriesData.timestamps || []).map(t => t ? String(t).substring(0, 10) : '');
         const values = seriesData.values || [];
 
-        // 1. Series + Trend chart
+        // 1. Series + Trend chart (null check sufficient for canvas from template)
         const seriesCtx = document.getElementById('ts-series-chart');
         if (seriesCtx && values.length > 0) {
             const datasets = [
@@ -2567,7 +2642,7 @@
             });
         }
 
-        // 2. ACF Chart
+        // 2. ACF Chart (null check sufficient for canvas from template)
         const acfCtx = document.getElementById('ts-acf-chart');
         if (acfCtx && acf.acf_values && acf.acf_values.length > 1) {
             const lags = acf.acf_values.slice(1); // skip lag 0
@@ -2618,14 +2693,14 @@
         app().innerHTML = `<div class="flex items-center justify-center py-20"><div class="spinner"></div></div>`;
         const model = await api(`/api/models/${modelId}`);
         if (model.error) return renderNotFound();
-        const sm = model.submodels.find(s => s.name === submodelName);
+        const sm = (model.submodels || []).find(s => s.name === submodelName);
         if (!sm) return renderNotFound();
 
         app().innerHTML = `
         <div class="fade-in max-w-4xl mx-auto">
             <div class="text-sm text-slate-400 mb-4 flex items-center gap-1.5">
                 <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/')">Ana Sayfa</span><span>\u203a</span>
-                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/model/${modelId}/results')">${esc(model.name)}</span><span>\u203a</span>
+                <span class="cursor-pointer hover:text-slate-600" onclick="navigate('/model/${escAttr(modelId)}/results')">${esc(model.name)}</span><span>\u203a</span>
                 <span class="text-slate-600">Otomatik \u00c7al\u0131\u015ft\u0131rma: ${esc(submodelName)}</span>
             </div>
 
@@ -2672,7 +2747,7 @@
                     </div>
                 </div>
                 ${sm.inference_time_sec != null && sm.inference_time_sec <= 0 ? '<p class="text-xs text-amber-600 mb-2">Tahmin s\u00fcresi bu analiz t\u00fcr\u00fc i\u00e7in \u00f6l\u00e7\u00fclemedi. Varsay\u0131lan de\u011fer (0.1 sn) kullan\u0131lacakt\u0131r.</p>' : ''}
-                <button class="btn-primary" onclick="calculateCost('${modelId}', '${escAttr(submodelName)}', ${sm.inference_time_sec}, ${model.num_columns})">Maliyeti Hesapla</button>
+                <button class="btn-primary" onclick="calculateCost('${escAttr(modelId)}', '${escAttr(submodelName)}', ${sm.inference_time_sec}, ${model.num_columns})">Maliyeti Hesapla</button>
                 <div id="cost-result" class="hidden mt-5"></div>
             </div>
 
@@ -2680,7 +2755,7 @@
                 <h3 class="font-semibold text-slate-800 mb-4">Otomatik \u00c7al\u0131\u015ft\u0131rma Y\u00f6ntemleri</h3>
                 <div class="grid grid-cols-2 gap-4">
                     <div class="p-5 rounded-xl border-2 transition-all ${sm.airflow_support.supported ? 'border-brand-200 hover:border-brand-400 cursor-pointer bg-brand-50/30' : 'border-slate-200 opacity-50'}"
-                         ${sm.airflow_support.supported ? `onclick="downloadExport('airflow', '${modelId}', '${escAttr(submodelName)}')"` : ''}>
+                         ${sm.airflow_support.supported ? `onclick="downloadExport('airflow', '${escAttr(modelId)}', '${escAttr(submodelName)}')"` : ''}>
                         <div class="flex items-center gap-3 mb-3">
                             <div class="w-10 h-10 rounded-lg flex items-center justify-center ${sm.airflow_support.supported ? 'bg-brand-100' : 'bg-slate-100'}">
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${sm.airflow_support.supported ? '#059669' : '#94A3B8'}" stroke-width="2"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg>
@@ -2694,7 +2769,7 @@
                     </div>
 
                     <div class="p-5 rounded-xl border-2 transition-all ${sm.sql_support.easy_sql ? 'border-brand-200 hover:border-brand-400 cursor-pointer bg-brand-50/30' : 'border-slate-200 opacity-50'}"
-                         ${sm.sql_support.easy_sql ? `onclick="downloadExport('mssql', '${modelId}', '${escAttr(submodelName)}')"` : ''}>
+                         ${sm.sql_support.easy_sql ? `onclick="downloadExport('mssql', '${escAttr(modelId)}', '${escAttr(submodelName)}')"` : ''}>
                         <div class="flex items-center gap-3 mb-3">
                             <div class="w-10 h-10 rounded-lg flex items-center justify-center ${sm.sql_support.easy_sql ? 'bg-brand-100' : 'bg-slate-100'}">
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${sm.sql_support.easy_sql ? '#059669' : '#94A3B8'}" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>

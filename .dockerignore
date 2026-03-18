@@ -1,28 +1,45 @@
+# Git
 .git
 .github
+
+# Environment / secrets
 .env
 .env.*
+
+# Python bytecode & virtual environments
 __pycache__
 *.pyc
 *.pyo
-.pytest_cache
-.mypy_cache
 venv
 .venv
 env
+*.egg-info
+
+# Lint / test caches
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Documentation (not needed in image)
 *.md
+LICENSE
+
+# IDE / OS
 .DS_Store
 Thumbs.db
 .vscode
 .idea
-*.egg-info
 
-# ML model dosyaları — imaja dahil edilmez, çalışma zamanında indirilir/volume'da saklanır
+# Claude Code
+.claude
+
+# Runtime data — volume-mounted, not baked into image
 data/
+
+# ML model files — downloaded at runtime or via network volume
+*.gguf
 *.bin
 *.pt
+*.pth
 *.onnx
 *.safetensors
-
-# DeployShield HTML (deployment tool, not part of the app)
-index.html

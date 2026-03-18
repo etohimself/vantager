@@ -1,69 +1,90 @@
-# ── Tahmin Platformu: GPU/ML Python Dockerfile ──
-# NVIDIA CUDA tabanlı — PyTorch, AutoGluon, Whisper, sentence-transformers destekli.
-# DeployShield uyumlu: app-data:/app/data + ml-cache:/home/appuser/.cache
+# syntax=docker/dockerfile:1
+# ── Tahmin Platformu: GPU/ML Dockerfile ──
+# Multi-stage build: NVIDIA CUDA 12.4 + Python 3.11 + ML stack
+# Includes Cloudflare Tunnel support for Vast.ai deployment.
+#
+# Build:  docker build -t tahmin-platformu .
+# Run:    docker run --gpus all -p 8080:8080 tahmin-platformu
+#
+# With Cloudflare Tunnel:
+#   docker run --gpus all -e CLOUDFLARE_TUNNEL_TOKEN=your-token tahmin-platformu
+#
+# Persistent data: mount or set DATA_DIR env var
+#   docker run --gpus all -p 8080:8080 -v my-data:/app/data tahmin-platformu
 
-# ═══ Aşama 1: Derleme ═══
+# ═══ Stage 1: Build Python virtualenv ═══
 FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04 AS builder
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV PYTHONDONTWRITEBYTECODE=1
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    software-properties-common && \
+        software-properties-common && \
     add-apt-repository -y ppa:deadsnakes/ppa && \
     apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 python3.11-venv python3.11-dev \
-    build-essential gcc g++ pkg-config \
-    libffi-dev libssl-dev git curl \
-    && rm -rf /var/lib/apt/lists/*
+        python3.11 python3.11-venv python3.11-dev \
+        build-essential gcc g++ pkg-config \
+        libffi-dev libssl-dev git curl && \
+    rm -rf /var/lib/apt/lists/*
 
 RUN python3.11 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
 COPY requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r /tmp/requirements.txt
 
-# ═══ Aşama 2: Çalışma Zamanı ═══
+# ═══ Stage 2: Runtime image ═══
 FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+LABEL org.opencontainers.image.title="Tahmin Platformu" \
+      org.opencontainers.image.description="AutoGluon ML prediction platform with Whisper STT and LLM" \
+      org.opencontainers.image.source="https://github.com/etohimself/vantager"
 
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Install runtime deps + cloudflared for tunnel support
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    software-properties-common && \
+        software-properties-common && \
     add-apt-repository -y ppa:deadsnakes/ppa && \
     apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 python3.11-venv \
-    ffmpeg libsndfile1 libgomp1 libffi8 libssl3 curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Güvenlik: root olmayan kullanıcı
-RUN groupadd -r appgroup && useradd -r -g appgroup -m appuser
+        python3.11 python3.11-venv \
+        ffmpeg libsndfile1 libgomp1 libffi8 libssl3 curl && \
+    curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb \
+        -o /tmp/cloudflared.deb && dpkg -i /tmp/cloudflared.deb && rm /tmp/cloudflared.deb && \
+    rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# GPU erişimi
-ENV NVIDIA_VISIBLE_DEVICES=all
-ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+# GPU visibility
+ENV NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
-# HuggingFace / sentence-transformers cache (DeployShield ml-cache volume ile eşleşir)
-ENV HF_HOME=/home/appuser/.cache/huggingface
-ENV SENTENCE_TRANSFORMERS_HOME=/home/appuser/.cache/torch/sentence_transformers
+# ML cache (HuggingFace models, sentence-transformers, etc.)
+ENV HF_HOME=/root/.cache/huggingface \
+    SENTENCE_TRANSFORMERS_HOME=/root/.cache/torch/sentence_transformers
+
+# Application defaults
+ENV HOST=0.0.0.0 \
+    PORT=8080 \
+    DATA_DIR=/app/data
 
 WORKDIR /app
 
-# ── Data dizini: Docker named volume mount noktası ──
-# DeployShield docker-compose: "app-data:/app/data"
-# Bu dizin IMAGE'da oluşturulmalı ki volume ilk mount'ta appuser ownership'i alsın.
-RUN mkdir -p /app/data/models /app/data/temp /app/data/stt \
-    && chown -R appuser:appgroup /app/data
+# Pre-create data subdirectories
+RUN mkdir -p /app/data/models /app/data/temp /app/data/stt /app/data/llm
 
-# Uygulama kodunu kopyala (data/ .dockerignore ile hariç tutulur)
-COPY --chown=appuser:appgroup . .
+# Copy application code (data/ excluded by .dockerignore)
+COPY . .
+RUN chmod +x start.sh
 
-USER appuser
 EXPOSE 8080
-CMD ["python3.11", "server.py"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
+    CMD curl -sf http://localhost:8080/ || exit 1
+
+CMD ["./start.sh"]

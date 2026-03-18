@@ -559,8 +559,7 @@ def _save_text_pipeline_config(model_id, text_columns, embedding_model_name):
         "embedding_model": embedding_model_name,
     }
     config_path = MODELS_DIR / model_id / "text_pipeline.json"
-    with open(config_path, "w") as f:
-        json.dump(config, f, indent=2)
+    _atomic_write_json(config_path, config)
     print(f"[Embedding] Pipeline config saved: {config_path}")
 
 
@@ -609,6 +608,15 @@ SESSION_IDLE_TIMEOUT = int(os.environ.get("SESSION_IDLE_TIMEOUT", str(2 * 3600))
 
 # ── Per-user model quota ─────────────────────────────────────────
 MAX_MODELS_PER_USER = int(os.environ.get("MAX_MODELS_PER_USER", "50"))
+
+# ── Trusted reverse-proxy IPs (for X-Forwarded-For) ──────────────
+# Only trust X-Forwarded-For when the direct peer IP is in this set.
+# Set to comma-separated IPs, e.g. "127.0.0.1,10.0.0.1,172.17.0.1"
+_TRUSTED_PROXY_IPS_RAW = os.environ.get("TRUSTED_PROXY_IPS", "")
+_TRUSTED_PROXY_IPS = (
+    set(ip.strip() for ip in _TRUSTED_PROXY_IPS_RAW.split(",") if ip.strip())
+    if _TRUSTED_PROXY_IPS_RAW else set()
+)
 
 # ══════════════════════════════════════════════════════════════════
 #  THREAD-SAFE FILE I/O
@@ -919,18 +927,32 @@ user_action_tracker = UserActionTracker()
 # ══════════════════════════════════════════════════════════════════
 
 class ModelRefCounter:
-    """Track active references to models to prevent deletion during use."""
+    """Track active references to models to prevent deletion during use.
+
+    Ref count semantics:
+      > 0  — number of active users (predictions, explainability, etc.)
+        0  — idle (default; key absent from dict)
+       -1  — marked for deletion; new acquire() calls will be rejected
+    """
     def __init__(self):
         self._lock = threading.Lock()
         self._refs = {}  # model_id -> int
 
-    def acquire(self, model_id: str):
+    def acquire(self, model_id: str) -> bool:
+        """Increment ref count. Returns False if model is being deleted."""
         with self._lock:
-            self._refs[model_id] = self._refs.get(model_id, 0) + 1
+            current = self._refs.get(model_id, 0)
+            if current < 0:
+                return False
+            self._refs[model_id] = current + 1
+            return True
 
     def release(self, model_id: str):
         with self._lock:
-            count = self._refs.get(model_id, 0) - 1
+            count = self._refs.get(model_id, 0)
+            if count < 0:
+                return  # deletion sentinel, don't touch
+            count -= 1
             if count <= 0:
                 self._refs.pop(model_id, None)
             else:
@@ -939,6 +961,21 @@ class ModelRefCounter:
     def is_busy(self, model_id: str) -> bool:
         with self._lock:
             return self._refs.get(model_id, 0) > 0
+
+    def try_mark_for_deletion(self, model_id: str) -> bool:
+        """Atomically check model is idle and mark it for deletion.
+        Returns True if successfully marked, False if model is busy."""
+        with self._lock:
+            if self._refs.get(model_id, 0) > 0:
+                return False
+            self._refs[model_id] = -1
+            return True
+
+    def unmark_deletion(self, model_id: str):
+        """Remove deletion sentinel (e.g. if deletion itself fails)."""
+        with self._lock:
+            if self._refs.get(model_id, 0) == -1:
+                self._refs.pop(model_id, None)
 
 
 model_ref_counter = ModelRefCounter()
@@ -1022,13 +1059,15 @@ class JobStore:
                          if job.get("status") in ("training", "processing", "queued")
                          and (now - job.get("_updated_at", now)) > HEARTBEAT_TIMEOUT]
                 for jid, job in stale:
-                    job["status"] = "error"
-                    job["error"] = "İş zaman aşımına uğradı (güncelleme alınamadı)"
                     log.warning(f"[JobStore] Heartbeat timeout: {jid[:8]}…")
+                    # Unregister BEFORE marking error so concurrent submits
+                    # don't see a stale registration and get rejected
                     uname = job.get("_username")
                     atype = job.get("_action_type")
                     if uname and atype:
                         user_action_tracker.unregister(uname, atype)
+                    job["status"] = "error"
+                    job["error"] = "İş zaman aşımına uğradı (güncelleme alınamadı)"
 
 
 # Global job stores (replace the old plain dicts)
@@ -1195,14 +1234,14 @@ def get_session_user(token: str) -> dict:
         # Check absolute expiry (SESSION_TTL_SECONDS)
         try:
             now_dt = datetime.now()
-            created = datetime.fromisoformat(session.get("created_at", ""))
+            created = datetime.fromisoformat(session.get("created_at", "")).replace(tzinfo=None)
             if (now_dt - created).total_seconds() > SESSION_TTL_SECONDS:
                 del sessions[token]
                 _atomic_write_json(SESSIONS_FILE, sessions)
                 return None
             # Check idle timeout (SESSION_IDLE_TIMEOUT)
             last_activity_str = session.get("last_activity", session.get("created_at", ""))
-            last_activity = datetime.fromisoformat(last_activity_str)
+            last_activity = datetime.fromisoformat(last_activity_str).replace(tzinfo=None)
             idle_seconds = (now_dt - last_activity).total_seconds()
             if idle_seconds > SESSION_IDLE_TIMEOUT:
                 del sessions[token]
@@ -1449,6 +1488,7 @@ LLAMA_CPP_MODEL = os.environ.get("LLAMA_CPP_MODEL", "local-model")
 # Set "false" to disable, "true" to force start even if port is in use.
 _llama_process = None
 _llama_log_fh = None
+_llama_lock = threading.Lock()
 LLAMA_BUNDLED = os.environ.get("LLAMA_BUNDLED", "auto")
 LLAMA_MODEL_REPO = os.environ.get("LLAMA_MODEL_REPO", "unsloth/Qwen3.5-4B-GGUF")
 LLAMA_MODEL_FILE = os.environ.get("LLAMA_MODEL_FILE", "Qwen3.5-4B-Q4_K_M.gguf")
@@ -1631,24 +1671,40 @@ def _start_bundled_llama():
     llama_log = LLAMA_DIR / "llama-server.log"
     LLAMA_DIR.mkdir(parents=True, exist_ok=True)
     log.info(f"[LLM] Starting llama-server on port {port}...")
-    _llama_log_fh = open(str(llama_log), "w")
-    _llama_process = _sp.Popen(cmd, stdout=_llama_log_fh, stderr=_sp.STDOUT, env=env)
+    try:
+        with _llama_lock:
+            _llama_log_fh = open(str(llama_log), "w")
+            _llama_process = _sp.Popen(cmd, stdout=_llama_log_fh, stderr=_sp.STDOUT, env=env)
+    except Exception as e:
+        with _llama_lock:
+            if _llama_log_fh:
+                _llama_log_fh.close()
+                _llama_log_fh = None
+        log.error(f"[LLM] Failed to start llama-server: {e}")
+        return
 
     for i in range(120):
         time.sleep(1)
-        if _llama_process.poll() is not None:
-            _llama_log_fh.close()
-            _llama_log_fh = None
-            tail = ""
-            try:
-                tail = llama_log.read_text(errors="replace")[-500:]
-            except Exception:
-                pass
-            log.error(f"[LLM] llama-server exited (code {_llama_process.returncode})")
-            if tail:
-                log.error(f"[LLM] Output:\n{tail}")
-            _llama_process = None
-            return
+        with _llama_lock:
+            if _llama_process is None:
+                return  # Shutdown handler already cleaned up
+            if _llama_process.poll() is not None:
+                exit_code = _llama_process.returncode
+                _llama_log_fh.close()
+                _llama_log_fh = None
+                _llama_process = None
+                tail = ""
+                try:
+                    with open(str(llama_log), "r", errors="replace") as _lf:
+                        _lf.seek(0, 2)
+                        _lf.seek(max(0, _lf.tell() - 1000))
+                        tail = _lf.read()[-500:]
+                except Exception:
+                    pass
+                log.error(f"[LLM] llama-server exited (code {exit_code})")
+                if tail:
+                    log.error(f"[LLM] Output:\n{tail}")
+                return
         try:
             s = _sock.create_connection(("localhost", port), timeout=2)
             s.close()
@@ -1660,24 +1716,29 @@ def _start_bundled_llama():
                 log.info(f"[LLM] Waiting for llama-server... ({i+1}s)")
 
     log.warning("[LLM] llama-server did not start within 120s")
-    _llama_process.kill()
-    _llama_process = None
+    with _llama_lock:
+        _llama_process.kill()
+        _llama_process = None
+        if _llama_log_fh:
+            _llama_log_fh.close()
+            _llama_log_fh = None
 
 
 def _stop_bundled_llama():
     """Terminate the bundled llama-server subprocess."""
     global _llama_process, _llama_log_fh
-    if _llama_process is not None:
-        log.info("[LLM] Stopping llama-server...")
-        _llama_process.terminate()
-        try:
-            _llama_process.wait(timeout=10)
-        except Exception:
-            _llama_process.kill()
-        _llama_process = None
-    if _llama_log_fh is not None:
-        _llama_log_fh.close()
-        _llama_log_fh = None
+    with _llama_lock:
+        if _llama_process is not None:
+            log.info("[LLM] Stopping llama-server...")
+            _llama_process.terminate()
+            try:
+                _llama_process.wait(timeout=10)
+            except Exception:
+                _llama_process.kill()
+            _llama_process = None
+        if _llama_log_fh is not None:
+            _llama_log_fh.close()
+            _llama_log_fh = None
 
 
 def _warmup_models():
@@ -2164,9 +2225,18 @@ def get_public_models() -> list:
     return [m for m in get_all_models() if m.get("visibility", "public") == "public"]
 
 
+_model_quota_lock = threading.Lock()
+
 def count_user_models(username: str) -> int:
     """Count total models owned by a user."""
     return sum(1 for m in get_all_models() if m.get("owner") == username)
+
+def check_and_reserve_model_quota(username: str) -> bool:
+    """Atomically check quota and reserve a slot. Returns True if allowed."""
+    with _model_quota_lock:
+        if count_user_models(username) >= MAX_MODELS_PER_USER:
+            return False
+        return True
 
 
 def _wilson_ci(p: float, n: int, z: float = 1.96) -> tuple:
@@ -2238,8 +2308,8 @@ def _try_lightgbm_sql(obj, feature_columns: list) -> str:
             model_dump = obj.dump_model()
             if 'tree_info' in model_dump:
                 return _lgbm_dump_to_sql(model_dump, feature_columns)
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug(f"LightGBM SQL generation failed: {e}")
     return None
 
 
@@ -2300,8 +2370,8 @@ def _try_xgboost_sql(obj, feature_columns: list) -> str:
         if 'binary' in objective:
             return f"1.0 / (1.0 + EXP(-({sum_expr})))"
         return sum_expr
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug(f"XGBoost SQL generation failed: {e}")
     return None
 
 
@@ -2313,8 +2383,8 @@ def _try_sklearn_ensemble_sql(obj, feature_columns: list) -> str:
         if not hasattr(estimators[0], 'tree_'):
             return None
         return _sklearn_tree_ensemble_to_sql(obj, feature_columns)
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug(f"sklearn ensemble SQL generation failed: {e}")
     return None
 
 
@@ -2429,7 +2499,9 @@ FROM NullSafeData;
         return None
 
 
-def _tree_to_case_when(tree_dict: dict, feature_names: list, node_id: int = 0) -> str:
+def _tree_to_case_when(tree_dict: dict, feature_names: list, node_id: int = 0, _depth: int = 0) -> str:
+    if _depth > 200:
+        return "0"
     left = tree_dict["children_left"]
     right = tree_dict["children_right"]
     features = tree_dict["feature"]
@@ -2440,15 +2512,23 @@ def _tree_to_case_when(tree_dict: dict, feature_names: list, node_id: int = 0) -
         val = values[node_id]
         if hasattr(val, '__len__'):
             if len(val.shape) > 1:
-                return str(round(float(val.argmax()), 6))
-            return str(round(float(val[0]), 6))
-        return str(round(float(val), 6))
+                v = float(val.argmax())
+            else:
+                v = float(val[0])
+        else:
+            v = float(val)
+        if math.isnan(v) or math.isinf(v):
+            return "0"
+        return str(round(v, 6))
 
-    feat_name = f"[{feature_names[features[node_id]]}]"
-    threshold = round(float(thresholds[node_id]), 10)
-    left_expr = _tree_to_case_when(tree_dict, feature_names, left[node_id])
-    right_expr = _tree_to_case_when(tree_dict, feature_names, right[node_id])
-    return f"CASE WHEN {feat_name} <= {threshold} THEN {left_expr} ELSE {right_expr} END"
+    feat_idx = features[node_id]
+    feat_name = f"[{feature_names[feat_idx]}]" if 0 <= feat_idx < len(feature_names) else f"[f{feat_idx}]"
+    threshold = float(thresholds[node_id])
+    if math.isnan(threshold) or math.isinf(threshold):
+        return "0"
+    left_expr = _tree_to_case_when(tree_dict, feature_names, left[node_id], _depth + 1)
+    right_expr = _tree_to_case_when(tree_dict, feature_names, right[node_id], _depth + 1)
+    return f"CASE WHEN {feat_name} <= {round(threshold, 10)} THEN {left_expr} ELSE {right_expr} END"
 
 
 def _sklearn_tree_ensemble_to_sql(model, feature_columns: list) -> str:
@@ -2473,11 +2553,18 @@ def _sklearn_tree_ensemble_to_sql(model, feature_columns: list) -> str:
         return None
 
 
-def _xgb_node_to_sql(node: dict, feature_columns: list) -> str:
+def _xgb_node_to_sql(node: dict, feature_columns: list, _depth: int = 0) -> str:
+    if _depth > 200:
+        return "0"
     if 'leaf' in node:
-        return str(round(node['leaf'], 8))
+        v = float(node['leaf'])
+        if math.isnan(v) or math.isinf(v):
+            return "0"
+        return str(round(v, 8))
     split_feature = node.get('split', '')
-    split_value = node.get('split_condition', 0)
+    split_value = float(node.get('split_condition', 0))
+    if math.isnan(split_value) or math.isinf(split_value):
+        return "0"
     if split_feature.startswith('f') and split_feature[1:].isdigit():
         feat_idx = int(split_feature[1:])
         if feat_idx < len(feature_columns):
@@ -2492,16 +2579,23 @@ def _xgb_node_to_sql(node: dict, feature_columns: list) -> str:
         no_child = children[1]
     else:
         return "0"
-    yes_sql = _xgb_node_to_sql(yes_child, feature_columns)
-    no_sql = _xgb_node_to_sql(no_child, feature_columns)
+    yes_sql = _xgb_node_to_sql(yes_child, feature_columns, _depth + 1)
+    no_sql = _xgb_node_to_sql(no_child, feature_columns, _depth + 1)
     return f"CASE WHEN {feat_name} < {round(split_value, 10)} THEN {yes_sql} ELSE {no_sql} END"
 
 
-def _lgbm_node_to_sql(node: dict, feature_columns: list) -> str:
+def _lgbm_node_to_sql(node: dict, feature_columns: list, _depth: int = 0) -> str:
+    if _depth > 200:
+        return "0"
     if 'leaf_value' in node:
-        return str(round(node['leaf_value'], 8))
+        v = float(node['leaf_value'])
+        if math.isnan(v) or math.isinf(v):
+            return "0"
+        return str(round(v, 8))
     split_feature = node.get('split_feature', 0)
-    threshold = node.get('threshold', 0)
+    threshold = float(node.get('threshold', 0))
+    if math.isnan(threshold) or math.isinf(threshold):
+        return "0"
     decision_type = node.get('decision_type', '<=')
     if isinstance(split_feature, int):
         if split_feature < len(feature_columns):
@@ -2510,8 +2604,8 @@ def _lgbm_node_to_sql(node: dict, feature_columns: list) -> str:
             feat_name = f"[f{split_feature}]"
     else:
         feat_name = f"[{split_feature}]"
-    left_sql = _lgbm_node_to_sql(node.get('left_child', {'leaf_value': 0}), feature_columns)
-    right_sql = _lgbm_node_to_sql(node.get('right_child', {'leaf_value': 0}), feature_columns)
+    left_sql = _lgbm_node_to_sql(node.get('left_child', {'leaf_value': 0}), feature_columns, _depth + 1)
+    right_sql = _lgbm_node_to_sql(node.get('right_child', {'leaf_value': 0}), feature_columns, _depth + 1)
     op = "<=" if decision_type == "<=" else "<"
     return f"CASE WHEN {feat_name} {op} {round(threshold, 10)} THEN {left_sql} ELSE {right_sql} END"
 
@@ -2612,9 +2706,9 @@ MODEL_PATH = "/opt/airflow/models/{model_id}/agmodel"
 INPUT_CSV_PATH = "/opt/airflow/data/input/prediction_input.csv"
 OUTPUT_CSV_PATH = "/opt/airflow/data/output/predictions_{{{{ ds }}}}.csv"
 ERROR_LOG_PATH = "/opt/airflow/data/output/prediction_errors_{{{{ ds }}}}.csv"
-SUBMODEL_NAME = "{submodel_name}"
-TARGET_COLUMN = "{target_col}"
-TASK_TYPE = "{task_type}"
+SUBMODEL_NAME = {json.dumps(submodel_name)}
+TARGET_COLUMN = {json.dumps(target_col)}
+TASK_TYPE = {json.dumps(task_type)}
 FEATURE_COLUMNS = {json.dumps(feature_columns)}
 {embedding_constants}
 default_args = {{
@@ -2776,10 +2870,10 @@ logger = logging.getLogger(__name__)
 MODEL_PATH = "/opt/airflow/models/{model_id}/agmodel"
 INPUT_CSV_PATH = "/opt/airflow/data/input/history_input.csv"
 OUTPUT_CSV_PATH = "/opt/airflow/data/output/forecast_{{{{ ds }}}}.csv"
-SUBMODEL_NAME = "{submodel_name}"
-TARGET_COLUMN = "{target_col}"
-TIMESTAMP_COLUMN = "{timestamp_column}"
-ITEM_ID_COLUMN = "{item_id_column}"
+SUBMODEL_NAME = {json.dumps(submodel_name)}
+TARGET_COLUMN = {json.dumps(target_col)}
+TIMESTAMP_COLUMN = {json.dumps(timestamp_column)}
+ITEM_ID_COLUMN = {json.dumps(item_id_column)}
 PREDICTION_LENGTH = {prediction_length}
 
 default_args = {{
@@ -2967,7 +3061,10 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
                 visibility: str = "private", timestamp_column: str = None,
                 item_id_column: str = None, prediction_length: int = 10):
     resource_task_id = f"training_{job_id}"
-    model_ref_counter.acquire(model_id)
+    if not model_ref_counter.acquire(model_id):
+        training_jobs[job_id]["status"] = "error"
+        training_jobs[job_id]["error"] = "Model siliniyor, eğitim başlatılamadı."
+        return
     try:
         # Acquire resources
         profile = resource_manager.get_profile("training_tabular")
@@ -3040,6 +3137,8 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
             )
 
             leaderboard = ts_predictor.leaderboard(silent=True)
+            if len(leaderboard) == 0:
+                raise ValueError("Hiçbir zaman serisi modeli eğitilemedi. Veri kalitesini kontrol edin.")
 
             feature_cols = [c for c in df.columns
                            if c not in (target_col, timestamp_column, id_col)]
@@ -3183,6 +3282,9 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
         target_unique = df[target_col].nunique()
         target_is_numeric = df[target_col].dtype.kind in ("i", "f")
 
+        if target_unique < 2:
+            raise ValueError(f"Hedef sütunda en az 2 farklı değer olmalı. Bulunan: {target_unique}")
+
         if task_type == "classification" or (not target_is_numeric) or (target_is_numeric and target_unique <= 20):
             # Classification: binary (2 classes) or multiclass (3+)
             problem_type = "binary" if target_unique == 2 else "multiclass"
@@ -3198,12 +3300,13 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
             eval_metric = "root_mean_squared_error"
             train_df, test_df = train_test_split(df, test_size=test_size, random_state=42)
 
+        if len(test_df) < 2:
+            test_df = train_df.sample(n=min(5, len(train_df)), random_state=42)
         print(f"[Eğitim] Bölme: {len(train_df)} eğitim, {len(test_df)} test satırı")
         print(f"[Eğitim] Problem tipi: {problem_type}" +
               (f" | Metin embedding: {len(text_columns)} sütun" if text_columns else ""))
 
         train_data = TabularDataset(train_df)
-        test_data = TabularDataset(test_df)
 
         ag_model_path = str(MODELS_DIR / model_id / "agmodel")
 
@@ -3215,6 +3318,8 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
         predictor.fit(train_data=train_data, presets=preset, time_limit=600, verbosity=1)
 
         leaderboard = predictor.leaderboard(silent=True)
+        if len(leaderboard) == 0:
+            raise ValueError("Hiçbir model eğitilemedi. Veri kalitesini veya hedef sütunu kontrol edin.")
 
         sample_size = min(100, len(test_df))
         sample_features = test_df.drop(columns=[target_col]).head(sample_size)
@@ -3427,7 +3532,10 @@ def _whisper_idle_monitor():
     global _whisper_last_used
     while True:
         time.sleep(60)
-        if _whisper_model is not None:
+        with _whisper_model_lock:
+            model_loaded = _whisper_model is not None
+            last_used = _whisper_last_used
+        if model_loaded:
             # Don't unload if any audio jobs are actively processing
             active = user_action_tracker.get_active()
             has_active_audio = any(
@@ -3435,10 +3543,11 @@ def _whisper_idle_monitor():
                 for actions in active.values()
             )
             if has_active_audio:
-                _whisper_last_used = time.time()  # Keep alive
+                with _whisper_model_lock:
+                    _whisper_last_used = time.time()  # Keep alive
                 continue
 
-            idle_time = time.time() - _whisper_last_used
+            idle_time = time.time() - last_used
             if idle_time > _WHISPER_IDLE_TIMEOUT:
                 log.info(f"[Whisper] Idle for {idle_time:.0f}s, unloading to free resources")
                 _unload_whisper_model()
@@ -3451,6 +3560,8 @@ def _transcribe_audio(audio_path: str, language: str) -> str:
     global _whisper_last_used
     if not FASTER_WHISPER_AVAILABLE:
         raise RuntimeError("faster-whisper yüklü değil. pip install faster-whisper")
+    if not os.path.isfile(audio_path) or os.path.getsize(audio_path) == 0:
+        raise ValueError(f"Ses dosyası boş veya bulunamadı: {os.path.basename(audio_path)}")
     model = _get_whisper_model()
     lang_map = {
         "turkish": "tr", "english": "en", "german": "de",
@@ -3654,7 +3765,10 @@ def audio_evaluate_pipeline(job_id: str, model_id: str, model_name: str,
     actuals_map: dict of { filename: { var_name: value } }
     """
     resource_task_id = f"audio_eval_{job_id}"
-    model_ref_counter.acquire(model_id)
+    if not model_ref_counter.acquire(model_id):
+        audio_eval_jobs[job_id]["status"] = "error"
+        audio_eval_jobs[job_id]["error"] = "Model siliniyor, işlem başlatılamadı."
+        return
     try:
         # Reserve per-job processing overhead only; whisper VRAM is managed
         # independently by _get_whisper_model() / _unload_whisper_model()
@@ -3811,7 +3925,10 @@ def audio_predict_pipeline(job_id: str, model_id: str,
     frozen prompt and schema.  Results are stored on the job dict for CSV download.
     """
     resource_task_id = f"audio_predict_{job_id}"
-    model_ref_counter.acquire(model_id)
+    if not model_ref_counter.acquire(model_id):
+        audio_predict_jobs[job_id]["status"] = "error"
+        audio_predict_jobs[job_id]["error"] = "Model siliniyor, işlem başlatılamadı."
+        return
     try:
         profile = resource_manager.get_profile("audio_pipeline")
         if not resource_manager.try_acquire(resource_task_id, "audio_predict",
@@ -3928,6 +4045,7 @@ def _sanitize_error(e) -> str:
 # ══════════════════════════════════════════════════════════════════
 
 class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
+    timeout = 60  # Socket timeout — prevents Slowloris DoS
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
@@ -3993,9 +4111,12 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         return user
 
     def _get_client_ip(self):
-        forwarded = self.headers.get("X-Forwarded-For", "")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
+        if _TRUSTED_PROXY_IPS:
+            peer_ip = self.client_address[0]
+            if peer_ip in _TRUSTED_PROXY_IPS:
+                forwarded = self.headers.get("X-Forwarded-For", "")
+                if forwarded:
+                    return forwarded.split(",")[0].strip()
         return self.client_address[0]
 
     def _require_admin(self) -> dict:
@@ -4035,28 +4156,38 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
 
     def send_json(self, data, status=200):
         try:
+            body = safe_json_dumps(data).encode("utf-8")
             self.send_response(status)
-            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
             origin = self._cors_origin()
             if origin:
                 self.send_header("Access-Control-Allow-Origin", origin)
                 self.send_header("Vary", "Origin")
-            self.send_header("Access-Control-Allow-Credentials", "true")
+                if self._cors_allowed:
+                    self.send_header("Access-Control-Allow-Credentials", "true")
             self.end_headers()
-            self.wfile.write(safe_json_dumps(data).encode("utf-8"))
+            self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass  # Client disconnected
 
+    @staticmethod
+    def _safe_filename(filename: str) -> str:
+        """Sanitize filename for Content-Disposition to prevent response splitting."""
+        return re.sub(r'[\r\n"\\\x00]', '_', filename)
+
     def send_file_download(self, content: str, filename: str, content_type: str = "text/plain"):
         try:
+            filename = self._safe_filename(filename)
             self.send_response(200)
-            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Type", f"{content_type}; charset=utf-8")
             self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
             origin = self._cors_origin()
             if origin:
                 self.send_header("Access-Control-Allow-Origin", origin)
                 self.send_header("Vary", "Origin")
-            self.send_header("Access-Control-Allow-Credentials", "true")
+                if self._cors_allowed:
+                    self.send_header("Access-Control-Allow-Credentials", "true")
             self.send_header("Access-Control-Expose-Headers", "Content-Disposition")
             self.end_headers()
             self.wfile.write(content.encode("utf-8"))
@@ -4071,7 +4202,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-        self.send_header("Access-Control-Allow-Credentials", "true")
+        if origin and self._cors_allowed:
+            self.send_header("Access-Control-Allow-Credentials", "true")
         self.end_headers()
 
     @staticmethod
@@ -4297,13 +4429,17 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
 
         token = create_session(username)
         self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Set-Cookie", f"session={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400")
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        cookie_flags = f"Path=/; HttpOnly; SameSite=Strict; Max-Age={SESSION_TTL_SECONDS}"
+        if os.environ.get("SECURE_COOKIES", "").lower() in ("true", "1", "yes"):
+            cookie_flags += "; Secure"
+        self.send_header("Set-Cookie", f"session={token}; {cookie_flags}")
         origin = self._cors_origin()
         if origin:
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
-        self.send_header("Access-Control-Allow-Credentials", "true")
+            if self._cors_allowed:
+                self.send_header("Access-Control-Allow-Credentials", "true")
         self.end_headers()
         self.wfile.write(safe_json_dumps({
             "success": True,
@@ -4320,8 +4456,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         if token:
             destroy_session(token)
         self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Set-Cookie", "session=; Path=/; HttpOnly; Max-Age=0")
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Set-Cookie", "session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0")
         origin = self._cors_origin()
         if origin:
             self.send_header("Access-Control-Allow-Origin", origin)
@@ -4774,7 +4910,10 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                 return self.send_json({"error": "CSV dosyası bulunamadı"}, 400)
 
             # Sanitize filename to prevent path traversal
-            filename = re.sub(r'[^\w\-. ]', '_', os.path.basename(raw_filename))
+            filename = re.sub(r'[^\w\-. ]', '_', os.path.basename(raw_filename)).strip('. ')
+            if not filename:
+                filename = "upload"
+            filename = filename[:200]  # limit length
             if not filename.lower().endswith('.csv'):
                 filename = filename + '.csv'
 
@@ -4783,8 +4922,12 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             temp_dir.mkdir(parents=True, exist_ok=True)
             csv_path = temp_dir / filename
 
-            with open(csv_path, "wb") as f:
-                f.write(csv_data)
+            try:
+                with open(csv_path, "wb") as f:
+                    f.write(csv_data)
+            except OSError as e:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                return self.send_json({"error": "Dosya yazılamadı. Sunucu diski dolu olabilir."}, 507)
 
             try:
                 df_sample = pd.read_csv(csv_path, nrows=100)
@@ -4848,8 +4991,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         if not AUTOGLUON_AVAILABLE:
             return self.send_json({"error": "AutoGluon yüklü değil"}, 500)
 
-        # Per-user model quota check
-        if count_user_models(user["username"]) >= MAX_MODELS_PER_USER:
+        # Per-user model quota check (atomic to prevent TOCTOU bypass)
+        if not check_and_reserve_model_quota(user["username"]):
             return self.send_json({"error": f"Analiz limitinize ulaştınız (maksimum {MAX_MODELS_PER_USER}). Eski analizleri silerek yer açabilirsiniz."}, 429)
 
         try:
@@ -4905,7 +5048,10 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         model_id = str(uuid.uuid4())
         model_dir = MODELS_DIR / model_id
         model_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(csv_path, model_dir / "training_data.csv")
+        # Atomic copy: write to tmp then rename (crash-safe on network volumes)
+        _tmp_csv = model_dir / ".training_data.csv.tmp"
+        shutil.copy2(csv_path, _tmp_csv)
+        os.replace(str(_tmp_csv), str(model_dir / "training_data.csv"))
 
         # ── Per-user concurrency check (atomic, AFTER all validation) ──
         job_id = str(uuid.uuid4())
@@ -4926,12 +5072,14 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                 item_id_column=item_id_column,
                 prediction_length=prediction_length,
             )
-        except RuntimeError:
-            # Pool shut down — unregister so user isn't permanently locked
+        except Exception as e:
+            # Queue submission failed — unregister so user isn't permanently locked
             user_action_tracker.unregister(user["username"], "training")
             training_jobs[job_id]["status"] = "error"
-            training_jobs[job_id]["error"] = "Sunucu kapanıyor. Lütfen tekrar deneyin."
-            return self.send_json({"error": "Sunucu kapanıyor. Lütfen tekrar deneyin."}, 503)
+            training_jobs[job_id]["error"] = "İş kuyruğa eklenemedi."
+            shutil.rmtree(model_dir, ignore_errors=True)
+            log.error(f"Training queue submit failed: {e}")
+            return self.send_json({"error": "İş kuyruğa eklenemedi. Lütfen tekrar deneyin."}, 503)
 
         add_activity("started_training", model_id, model_name,
                      f"Eğitim başlatıldı: {preset}", username=user["username"])
@@ -4945,6 +5093,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         job = training_jobs.get(job_id)
         if not job:
             return self.send_json({"error": "İş bulunamadı"}, 404)
+        if job.get("_username") != user["username"] and user["role"] not in ("admin", "master_admin"):
+            return self.send_json({"error": "Bu işi görüntüleme yetkiniz yok"}, 403)
         response = {"status": job["status"], "model_id": job.get("model_id")}
         if job["status"] == "queued":
             response["position"] = _training_queue.get_position(job_id)
@@ -4986,7 +5136,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                 traceback.print_exc()
                 return self.send_json({"error": f"Model yüklenirken hata: {self._safe_error_message(e)}"}, 500)
 
-        model_ref_counter.acquire(model_id)
+        if not model_ref_counter.acquire(model_id):
+            return self.send_json({"error": "Model siliniyor, lütfen bekleyin"}, 409)
         try:
             # ── Time Series prediction path ──
             if meta.get("task_type") == "timeseries":
@@ -5005,7 +5156,10 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                 target_col = meta["target_column"]
 
                 hist_df = pd.DataFrame(history_rows)
-                hist_df[ts_col] = pd.to_datetime(hist_df[ts_col])
+                try:
+                    hist_df[ts_col] = pd.to_datetime(hist_df[ts_col])
+                except (ValueError, TypeError) as e:
+                    return self.send_json({"error": f"Zaman damgası ayrıştırılamadı: {self._safe_error_message(e)}"}, 400)
 
                 if id_col not in hist_df.columns:
                     hist_df[id_col] = "series_0"
@@ -5024,6 +5178,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                 # Convert forecast to a list of dicts
                 forecast_records = []
                 pred_df = predictions.reset_index()
+                if len(pred_df) == 0:
+                    return self.send_json({"error": "Tahmin sonucu boş döndü"}, 500)
                 for _, row in pred_df.iterrows():
                     rec = {}
                     for col in pred_df.columns:
@@ -5047,6 +5203,14 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             # ── Unified prediction path (with auto text embedding) ──
             features = data.get("features", {})
             column_types = meta.get("column_types", {})
+            # Validate required columns are present
+            required_cols = set(meta.get("feature_columns", []))
+            provided_cols = set(features.keys())
+            missing = required_cols - provided_cols
+            if missing and len(missing) > len(required_cols) * 0.5:
+                return self.send_json({
+                    "error": f"Eksik özellik sütunları: {', '.join(sorted(list(missing)[:5]))}"
+                }, 400)
             cleaned_features = clean_prediction_input(features, column_types)
             predictor = model_cache.load_model(model_id, meta)
             if predictor is None:
@@ -5081,7 +5245,12 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                     proba = predictor.predict_proba(input_df, model=submodel_name)
                     result["probabilities"] = {}
                     for k, v in proba.iloc[0].items():
-                        val = float(v) if not (math.isnan(float(v)) or math.isinf(float(v))) else 0.0
+                        try:
+                            val = float(v)
+                            if math.isnan(val) or math.isinf(val):
+                                val = 0.0
+                        except (ValueError, TypeError):
+                            val = 0.0
                         result["probabilities"][str(k)] = round(val, 4)
                 except Exception:
                     pass
@@ -5127,7 +5296,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
 
         content_type = self.headers.get("Content-Type", "")
 
-        model_ref_counter.acquire(model_id)
+        if not model_ref_counter.acquire(model_id):
+            return self.send_json({"error": "Model siliniyor, lütfen bekleyin"}, 409)
         try:
             if "multipart/form-data" in content_type:
                 boundary = self._extract_boundary(content_type)
@@ -5159,7 +5329,10 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                 input_df, batch_report = clean_dataframe(
                     input_df, context="timeseries", timestamp_column=ts_col)
 
-                input_df[ts_col] = pd.to_datetime(input_df[ts_col])
+                try:
+                    input_df[ts_col] = pd.to_datetime(input_df[ts_col])
+                except (ValueError, TypeError) as e:
+                    return self.send_json({"error": f"Zaman damgası ayrıştırılamadı: {self._safe_error_message(e)}"}, 400)
                 if id_col not in input_df.columns:
                     input_df[id_col] = "series_0"
 
@@ -5230,14 +5403,15 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             # Use original (human-readable) DataFrame if we embedded text columns
             output_df = original_input_df.copy() if _batch_text_cols_present else input_df.copy()
             target_col = meta["target_column"]
-            output_df[f"{target_col}_predicted"] = predictions
+            # Use .values for positional assignment to avoid pandas index misalignment
+            output_df[f"{target_col}_predicted"] = predictions.values
 
             if meta.get("problem_type") in ("binary", "multiclass") or meta.get("task_type") == "classification":
                 try:
                     proba = predictor.predict_proba(input_df, model=submodel_name)
                     for col in proba.columns:
                         prob_col = proba[col].fillna(0.0).replace([np.inf, -np.inf], 0.0).round(4)
-                        output_df[f"{target_col}_proba_{col}"] = prob_col
+                        output_df[f"{target_col}_proba_{col}"] = prob_col.values
                 except Exception:
                     pass
 
@@ -5340,7 +5514,7 @@ CSV dosyası en az şu sütunları içermelidir:
                 ag_model_path = MODELS_DIR / model_id / "agmodel"
                 if ag_model_path.exists():
                     for file_path in ag_model_path.rglob('*'):
-                        if file_path.is_file():
+                        if file_path.is_file() and not file_path.is_symlink():
                             arcname = "model/" + str(file_path.relative_to(ag_model_path))
                             zf.write(file_path, arcname)
 
@@ -5351,7 +5525,7 @@ CSV dosyası en az şu sütunları içermelidir:
                         f"{submodel_name} için Zaman Serisi Airflow paketi dışa aktarıldı",
                         username=user["username"])
 
-            filename = f"{safe_submodel}_ts_airflow_paketi.zip"
+            filename = self._safe_filename(f"{safe_submodel}_ts_airflow_paketi.zip")
             self.send_response(200)
             self.send_header("Content-Type", "application/zip")
             self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
@@ -5413,7 +5587,7 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             ag_model_path = MODELS_DIR / model_id / "agmodel"
             if ag_model_path.exists():
                 for file_path in ag_model_path.rglob('*'):
-                    if file_path.is_file():
+                    if file_path.is_file() and not file_path.is_symlink():
                         arcname = "model/" + str(file_path.relative_to(ag_model_path))
                         zf.write(file_path, arcname)
             # Include text pipeline config for NLP models
@@ -5427,7 +5601,7 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         add_activity("exported_airflow", model_id, meta["name"],
                     f"{submodel_name} için Airflow paketi dışa aktarıldı", username=user["username"])
 
-        filename = f"{safe_submodel}_airflow_paketi.zip"
+        filename = self._safe_filename(f"{safe_submodel}_airflow_paketi.zip")
         self.send_response(200)
         self.send_header("Content-Type", "application/zip")
         self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
@@ -5599,7 +5773,7 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         if meta.get("owner") != user["username"] and user["role"] not in ("admin", "master_admin"):
             return self.send_json({"error": "Bu modeli silme yetkiniz yok"}, 403)
 
-        if model_ref_counter.is_busy(model_id):
+        if not model_ref_counter.try_mark_for_deletion(model_id):
             return self.send_json({"error": "Bu analiz şu anda kullanılıyor. Aktif işlerin bitmesini bekleyin."}, 409)
 
         model_name = meta.get("name", "Bilinmeyen")
@@ -5615,6 +5789,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         except Exception as e:
             traceback.print_exc()
             self.send_json({"error": f"Silme hatası: {self._safe_error_message(e)}"}, 500)
+        finally:
+            model_ref_counter.unmark_deletion(model_id)
 
     def handle_explain(self, model_id, submodel_name):
         user = self._require_auth()
@@ -5654,7 +5830,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             }, 500)
 
         # Time series explainability analysis
-        model_ref_counter.acquire(model_id)
+        if not model_ref_counter.acquire(model_id):
+            return self.send_json({"error": "Model siliniyor, lütfen bekleyin"}, 409)
         if meta.get("task_type") == "timeseries":
             try:
                 csv_path = MODELS_DIR / model_id / "training_data.csv"
@@ -5667,9 +5844,13 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                 id_col = meta.get("item_id_column", "__item_id")
 
                 # Parse and sort
+                if not ts_col or ts_col not in df.columns:
+                    return self.send_json({"error": f"Zaman damgası sütunu '{ts_col}' bulunamadı"}, 400)
                 df[ts_col] = pd.to_datetime(df[ts_col])
                 if id_col not in df.columns:
                     df[id_col] = "series_0"
+                if len(df) == 0:
+                    return self.send_json({"error": "Eğitim verisi boş"}, 400)
                 # Use first series for analysis
                 first_id = df[id_col].iloc[0]
                 ts = df[df[id_col] == first_id].sort_values(ts_col).copy()
@@ -5695,7 +5876,7 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                     "std": round(float(y.std()), 4),
                     "min": round(float(y.min()), 4),
                     "max": round(float(y.max()), 4),
-                    "cv": round(float(y.std() / y.mean()), 4) if y.mean() != 0 else None,
+                    "cv": round(float(y.std() / y.mean()), 4) if abs(float(y.mean())) > 1e-10 else None,
                     "start": y.index.min().isoformat(),
                     "end": y.index.max().isoformat(),
                 }
@@ -5704,6 +5885,7 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                 # ── 2. Trend Analysis (linear regression) ──
                 x_vals = np.arange(len(y), dtype=float)
                 y_vals = y.values.astype(float)
+                slope = 0.0
                 if len(x_vals) > 1:
                     slope, intercept = np.polyfit(x_vals, y_vals, 1)
                     trend_line = (slope * x_vals + intercept).tolist()
@@ -5712,7 +5894,7 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                     ss_tot = np.sum((y_vals - y_vals.mean()) ** 2)
                     r_squared = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
                     trend_direction = "yükseliş" if slope > 0 else "düşüş"
-                    trend_pct_per_step = round(float(slope / y.mean() * 100), 3) if y.mean() != 0 else 0
+                    trend_pct_per_step = round(float(slope / y.mean() * 100), 3) if abs(float(y.mean())) > 1e-10 else 0
                 else:
                     trend_line = y_vals.tolist()
                     r_squared = 0.0
@@ -5785,16 +5967,18 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                         seasonal_strength = max(0.0, float(1.0 - var_resid / var_season_resid)) if var_season_resid > 0 else 0.0
 
                         # Prepare decomposition data for charting
+                        _safe_round = lambda v: round(float(v), 2) if not (np.isnan(v) or np.isinf(v)) else None
                         decomposition = {
                             "period": period,
-                            "trend": [round(float(v), 2) if not np.isnan(v) else None for v in decomp.trend.values],
-                            "seasonal": [round(float(v), 2) if not np.isnan(v) else None for v in decomp.seasonal.values],
-                            "residual": [round(float(v), 2) if not np.isnan(v) else None for v in decomp.resid.values],
+                            "trend": [_safe_round(v) for v in decomp.trend.values],
+                            "seasonal": [_safe_round(v) for v in decomp.seasonal.values],
+                            "residual": [_safe_round(v) for v in decomp.resid.values],
                         }
                 except ImportError:
-                    pass
+                    result["decomposition_note"] = "statsmodels yüklü değil — mevsimsel ayrıştırma atlandı"
                 except Exception as e:
-                    print(f"  [Explain] Decomposition failed: {e}")
+                    log.warning(f"[Explain] Decomposition failed: {e}")
+                    result["decomposition_note"] = "Mevsimsel ayrıştırma hesaplanamadı"
 
                 result["decomposition"] = decomposition
                 result["seasonal_strength"] = round(seasonal_strength, 4)
@@ -5950,13 +6134,13 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                 add_activity("explained", model_id, meta["name"],
                             f"{submodel_name} için zaman serisi açıklanabilirlik analizi",
                             username=user["username"])
-                model_ref_counter.release(model_id)
                 return self.send_json(result)
 
             except Exception as e:
                 traceback.print_exc()
-                model_ref_counter.release(model_id)
                 return self.send_json({"error": f"Zaman serisi analiz hatası: {self._safe_error_message(e)}"}, 500)
+            finally:
+                model_ref_counter.release(model_id)
 
         # ── Call Analysis (LLM) explainability ──
         if meta.get("task_type") == "call_analysis":
@@ -5967,6 +6151,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
 
                 if not row_results:
                     return self.send_json({"error": "Değerlendirme sonuçları bulunamadı"}, 404)
+                # Validate schema structure
+                schema = [v for v in schema if isinstance(v, dict) and "name" in v]
 
                 result = {
                     "model_id": model_id,
@@ -5997,7 +6183,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
 
                     if vtype == "classification" and actuals:
                         correct = sum(1 for a, p in zip(actuals, predictions)
-                                      if str(a).lower().strip() == str(p).lower().strip())
+                                      if a is not None and p is not None
+                                      and str(a).lower().strip() == str(p).lower().strip())
                         va["accuracy"] = round(correct / len(actuals) * 100, 1) if actuals else 0
                         va["correct"] = correct
 
@@ -6087,13 +6274,13 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                 add_activity("explained", model_id, meta["name"],
                             f"{submodel_name} için çağrı analizi açıklanabilirlik",
                             username=user["username"])
-                model_ref_counter.release(model_id)
                 return self.send_json(result)
 
             except Exception as e:
                 traceback.print_exc()
-                model_ref_counter.release(model_id)
                 return self.send_json({"error": f"Çağrı analizi açıklanabilirlik hatası: {self._safe_error_message(e)}"}, 500)
+            finally:
+                model_ref_counter.release(model_id)
 
         try:
             predictor = model_cache.load_model(model_id, meta)
@@ -6131,6 +6318,11 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                 feature_cols = meta.get("feature_columns_embedded", feature_cols)
 
             sample_size = min(200, len(df))
+            if sample_size == 0:
+                return self.send_json({"error": "Temizlik sonrası analiz için yeterli veri kalmadı"}, 400)
+            feature_cols = [c for c in feature_cols if c in df.columns]
+            if not feature_cols:
+                return self.send_json({"error": "Analiz için kullanılabilir özellik sütunu bulunamadı"}, 400)
             sample_df = df.sample(n=sample_size, random_state=42)
             sample_features = sample_df[feature_cols]
 
@@ -6175,7 +6367,7 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                 method_label = "Permütasyon Önemi (sklearn)"
             except Exception:
                 for col in feature_cols:
-                    importance[col] = 1.0 / len(feature_cols)
+                    importance[col] = 1.0 / max(1, len(feature_cols))
                 method_label = "Eşit Dağılım (Varsayılan)"
 
             # For text models: aggregate embedding column importances → original text column names
@@ -6285,6 +6477,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
 
             if shap_data:
                 result["shap"] = shap_data
+            elif is_tree_model and not _is_text_model:
+                result["shap_note"] = "SHAP analizi bu model için hesaplanamadı (kütüphane eksik veya model tipi desteklenmiyor)"
 
             # Correlation analysis
             # For text models, reload original df for correlation since embedding replaced text cols
@@ -6304,14 +6498,14 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                         encoded[encoded == -1] = np.nan
                         target_numeric = pd.factorize(corr_df[target_col])[0].astype(float) if corr_df[target_col].dtype in ['object', 'category'] else corr_df[target_col].astype(float)
                         mask = ~(np.isnan(encoded) | np.isnan(target_numeric))
-                        if mask.sum() > 2:
+                        if mask.sum() > 3:
                             corr = np.corrcoef(encoded[mask], target_numeric[mask])[0, 1]
                             if not np.isnan(corr):
                                 correlations[col] = round(float(corr), 4)
                     else:
                         target_numeric = pd.factorize(corr_df[target_col])[0].astype(float) if corr_df[target_col].dtype in ['object', 'category'] else corr_df[target_col].astype(float)
                         mask = ~(corr_df[col].isna() | np.isnan(target_numeric))
-                        if mask.sum() > 2:
+                        if mask.sum() > 3:
                             corr = np.corrcoef(corr_df[col][mask].astype(float), target_numeric[mask])[0, 1]
                             if not np.isnan(corr):
                                 correlations[col] = round(float(corr), 4)
@@ -6384,12 +6578,12 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             add_activity("explained", model_id, meta["name"],
                         f"{submodel_name} için açıklanabilirlik analizi", username=user["username"])
             self.send_json(result)
-            model_ref_counter.release(model_id)
 
         except Exception as e:
             traceback.print_exc()
-            model_ref_counter.release(model_id)
             self.send_json({"error": self._safe_error_message(e)}, 500)
+        finally:
+            model_ref_counter.release(model_id)
 
     # ── Audio Evaluation Handlers ─────────────────────────────────
 
@@ -6407,8 +6601,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         if not REQUESTS_AVAILABLE:
             return self.send_json({"error": "requests yüklü değil. pip install requests"}, 500)
 
-        # Per-user model quota check
-        if count_user_models(user["username"]) >= MAX_MODELS_PER_USER:
+        # Per-user model quota check (atomic to prevent TOCTOU bypass)
+        if not check_and_reserve_model_quota(user["username"]):
             return self.send_json({"error": f"Analiz limitinize ulaştınız (maksimum {MAX_MODELS_PER_USER}). Eski analizleri silerek yer açabilirsiniz."}, 429)
 
         # ── Per-user concurrency check ──
@@ -6462,9 +6656,11 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         temp_dir.mkdir(parents=True, exist_ok=True)
 
         audio_files = []
-        for af in audio_files_parts:
+        for _afi, af in enumerate(audio_files_parts):
             # Sanitize filename to prevent path traversal
-            fname = re.sub(r'[^\w\-. ]', '_', af["filename"])
+            fname = re.sub(r'[^\w\-. ]', '_', af["filename"]).strip('. ')
+            if not fname:
+                fname = f"audio_{_afi}.wav"
             fpath = temp_dir / fname
             with open(fpath, "wb") as f:
                 f.write(af["data"])
@@ -6514,6 +6710,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         job = audio_eval_jobs.get(job_id)
         if not job:
             return self.send_json({"error": "İş bulunamadı"}, 404)
+        if job.get("_username") != user["username"] and user["role"] not in ("admin", "master_admin"):
+            return self.send_json({"error": "Bu işi görüntüleme yetkiniz yok"}, 403)
 
         response = {
             "status": job["status"],
@@ -6592,8 +6790,10 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         temp_dir.mkdir(parents=True, exist_ok=True)
 
         audio_files = []
-        for af in audio_files_parts:
-            fname = re.sub(r'[^\w\-. ]', '_', af["filename"])
+        for _afi, af in enumerate(audio_files_parts):
+            fname = re.sub(r'[^\w\-. ]', '_', af["filename"]).strip('. ')
+            if not fname:
+                fname = f"audio_{_afi}.wav"
             fpath = temp_dir / fname
             with open(fpath, "wb") as f:
                 f.write(af["data"])
@@ -6642,6 +6842,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         job = audio_predict_jobs.get(job_id)
         if not job:
             return self.send_json({"error": "İş bulunamadı"}, 404)
+        if job.get("_username") != user["username"] and user["role"] not in ("admin", "master_admin"):
+            return self.send_json({"error": "Bu işi görüntüleme yetkiniz yok"}, 403)
 
         response = {
             "status": job["status"],
@@ -6665,6 +6867,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         job = audio_predict_jobs.get(job_id)
         if not job:
             return self.send_json({"error": "İş bulunamadı"}, 404)
+        if job.get("_username") != user["username"] and user["role"] not in ("admin", "master_admin"):
+            return self.send_json({"error": "Bu işi indirme yetkiniz yok"}, 403)
         if job["status"] != "done":
             return self.send_json({"error": "İş henüz tamamlanmadı"}, 400)
 
@@ -6731,6 +6935,9 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             # Remove surrounding quotes
             if raw.startswith('"') and raw.endswith('"'):
                 raw = raw[1:-1]
+            # Validate boundary length and format (RFC 2046: max 70 chars)
+            if not raw or len(raw) > 200:
+                return ""
             return raw
         except (IndexError, AttributeError):
             return ""
