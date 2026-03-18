@@ -2191,8 +2191,11 @@ def save_activity_log(log_data: list):
         _atomic_write_json(ACTIVITY_FILE, log_data, use_safe_json=True)
 
 
-def add_activity(action: str, model_id: str = None, model_name: str = None, details: str = "", username: str = ""):
-    """Add an activity entry. Atomic read-modify-write."""
+def add_activity(action: str, model_id: str = None, model_name: str = None, details: str = "", username: str = "", visibility: str = "admin_only"):
+    """Add an activity entry. Atomic read-modify-write.
+
+    visibility: 'public' = visible to all users, 'admin_only' = only admins see it.
+    """
     with _file_locks["activity"]:
         log_data = _safe_read_json(ACTIVITY_FILE, default=[])
         log_data.insert(0, {
@@ -2202,9 +2205,20 @@ def add_activity(action: str, model_id: str = None, model_name: str = None, deta
             "model_name": model_name,
             "details": details,
             "username": username,
+            "visibility": visibility,
         })
         log_data = log_data[:100]
         _atomic_write_json(ACTIVITY_FILE, log_data, use_safe_json=True)
+
+
+def get_filtered_activity(user: dict) -> list:
+    """Return activity entries filtered by user role."""
+    activity = load_activity_log()
+    is_admin = user.get("role") in ("admin", "master_admin")
+    if is_admin:
+        return activity
+    # Regular users: only see public activities
+    return [a for a in activity if a.get("visibility") == "public"]
 
 
 def get_all_models() -> list:
@@ -3134,6 +3148,7 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
                                              "high_quality", "best_quality") else "medium_quality",
                 time_limit=600,
                 verbosity=1,
+                num_gpus=0,  # CPU for tree models; GPU reserved for Whisper/LLM
             )
 
             leaderboard = ts_predictor.leaderboard(silent=True)
@@ -3315,7 +3330,8 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
             eval_metric=eval_metric, path=ag_model_path,
         )
 
-        predictor.fit(train_data=train_data, presets=preset, time_limit=600, verbosity=1)
+        predictor.fit(train_data=train_data, presets=preset, time_limit=600, verbosity=1,
+                      num_gpus=0)  # CPU for tree models; GPU reserved for Whisper/LLM
 
         leaderboard = predictor.leaderboard(silent=True)
         if len(leaderboard) == 0:
@@ -4591,7 +4607,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             })
             save_users(users)
 
-        add_activity("registration_request", details=f"Yeni kayıt başvurusu: {display_name} ({email})", username=username)
+        add_activity("registration_request", details=f"{display_name} platforma katıldı.",
+                     username=username, visibility="public")
         self.send_json({"success": True, "message": "Başvurunuz alındı. Yönetici onayından sonra giriş yapabilirsiniz."})
 
     def handle_change_password(self, body):
@@ -4785,7 +4802,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         # My models
         my_models = [m for m in all_models if m.get("owner") == user["username"]]
 
-        activity = load_activity_log()
+        activity = get_filtered_activity(user)
 
         best_model = None
         if visible_models:
@@ -5705,12 +5722,19 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         if visibility not in ("public", "private"):
             return self.send_json({"error": "Geçersiz görünürlük"}, 400)
 
+        was_ever_public = meta.get("_was_public", False)
         meta["visibility"] = visibility
-        update_model_meta_fields(model_id, visibility=visibility)
+        update_fields = {"visibility": visibility}
 
-        label = "Herkese Açık" if visibility == "public" else "Özel"
-        add_activity("visibility_changed", model_id, meta.get("name", ""),
-                     f"Görünürlük değiştirildi: {label}", username=user["username"])
+        # Track if model was ever made public (prevents spam on toggle)
+        if visibility == "public" and not was_ever_public:
+            update_fields["_was_public"] = True
+            display_name = find_user(user["username"]).get("display_name", user["username"]) if find_user(user["username"]) else user["username"]
+            add_activity("model_shared", model_id, meta.get("name", ""),
+                         f"{display_name} bir model paylaştı: {meta.get('name', '')}",
+                         username=user["username"], visibility="public")
+
+        update_model_meta_fields(model_id, **update_fields)
         self.send_json({"success": True, "message": f"Görünürlük güncellendi: {label}"})
 
     def handle_endorse(self, model_id, body):
@@ -5733,7 +5757,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
 
         if endorse:
             add_activity("endorsed", model_id, meta["name"],
-                        f"Model yönetici tarafından onaylandı", username=admin["username"])
+                        f"'{meta['name']}' yönetici tarafından onaylandı",
+                        username=admin["username"], visibility="public")
         else:
             add_activity("unendorsed", model_id, meta["name"],
                         f"Model onayı kaldırıldı", username=admin["username"])
