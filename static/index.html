@@ -731,6 +731,31 @@
     let uploadData = null;
 
     async function renderTrain() {
+        // Check if user has an active training job
+        const activeCheck = await api('/api/training/active');
+        if (activeCheck.active && activeCheck.job_id) {
+            app().innerHTML = `
+            <div class="fade-in max-w-3xl mx-auto">
+                <div class="mb-8">
+                    <h1 class="text-3xl font-bold tracking-tight text-slate-900 mb-1">Analiz Devam Ediyor</h1>
+                    <p class="text-slate-500 text-sm">Daha \u00f6nce ba\u015flat\u0131lan analiz h\u00e2l\u00e2 \u00e7al\u0131\u015f\u0131yor</p>
+                </div>
+                <div id="train-step3">
+                    <div class="card p-10 text-center">
+                        <div class="spinner mx-auto mb-5"></div>
+                        <h3 class="font-bold text-xl text-slate-800 mb-2">Analiz yap\u0131l\u0131yor...</h3>
+                        <p class="text-slate-500 text-sm mb-4">Verileriniz analiz ediliyor, en iyi sonu\u00e7lar bulunuyor</p>
+                        <div class="progress-bar w-72 mx-auto">
+                            <div class="progress-bar-fill" id="train-progress" style="width: 10%"></div>
+                        </div>
+                        <p class="text-slate-400 text-xs mt-3" id="train-status-text">Devam eden analiz kontrol ediliyor...</p>
+                    </div>
+                </div>
+            </div>`;
+            pollTrainingStatus(activeCheck.job_id);
+            return;
+        }
+
         const presets = await api('/api/presets');
         if (presets.error) return;
 

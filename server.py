@@ -4256,6 +4256,9 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         elif path == "/api/server/status":
             return self.handle_server_status()
 
+        elif path == "/api/training/active":
+            return self.handle_active_training()
+
         elif path == "/api/models":
             return self.handle_list_models(params)
 
@@ -5102,6 +5105,24 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                      f"Eğitim başlatıldı: {preset}", username=user["username"])
 
         return self.send_json({"job_id": job_id, "model_id": model_id, "status": "queued"})
+
+    def handle_active_training(self):
+        """Check if current user has an active training job."""
+        user = self._require_auth()
+        if not user:
+            return
+        active = user_action_tracker.get_active(user["username"])
+        training_job_id = active.get("training")
+        if training_job_id:
+            job = training_jobs.get(training_job_id)
+            if job and job.get("status") not in ("done", "error"):
+                return self.send_json({
+                    "active": True,
+                    "job_id": training_job_id,
+                    "status": job.get("status"),
+                    "model_id": job.get("model_id"),
+                })
+        self.send_json({"active": False})
 
     def handle_training_status(self, job_id):
         user = self._require_auth()
