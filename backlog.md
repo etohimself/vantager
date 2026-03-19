@@ -76,12 +76,64 @@
 
 ---
 
+---
+
+## UNFIXED / LOW PRIORITY — From Verification Scan (2026-03-19)
+
+Items found during the 20-agent verification scan after all backlog fixes were applied. Evaluated as low priority — not crashes, not security issues, not data corruption risks.
+
+### N2: Training Text Embedding VRAM Not Separately Acquired
+
+**File:** server.py | **Lines:** 3469 | **Category:** VRAM Management
+**Severity:** LOW (accepted)
+
+Training with text columns loads an embedding model (~500MB VRAM) without a separate ResourceManager reservation. Training uses `num_gpus=0` (CPU only), so the embedding model is the only GPU consumer during training. The two-layer check in `try_acquire()` (bookkeeping + `mem_get_info()`) catches actual VRAM insufficiency at runtime. Not a crash risk on 8GB+ GPUs.
+
+---
+
+### N3: Audio Pipeline Outer Exception Handler Doesn't Distinguish OOM
+
+**File:** server.py | **Lines:** 4164-4167, 4290-4293 | **Category:** Error Handling
+**Severity:** LOW (accepted)
+
+The outer `except Exception` in audio pipelines doesn't check for "out of memory" or "cuda" in the error string. Per-file errors ARE caught inside the loop. The outer handler only triggers if something outside the file loop crashes (very rare). The `finally` block calls `torch.cuda.empty_cache()` regardless.
+
+---
+
+### N7: Missing Null Check Before _llama_process.kill() at Timeout
+
+**File:** server.py | **Line:** 1842 | **Category:** Null Safety
+**Severity:** LOW (accepted)
+
+After the 120-second startup health-check loop expires, `_llama_process.kill()` is called without checking for None. The process was assigned at `Popen` (line 1793) and is only set to None by `_stop_bundled_llama()` in another thread. Race is extremely unlikely — requires shutdown signal during the exact 120-second startup window.
+
+---
+
+### N8: Missing Dependency Errors Return 500 Instead of 503
+
+**File:** server.py | **Lines:** 5289, 5575, 6262 + others | **Category:** HTTP Status Codes
+**Severity:** LOW (accepted)
+
+Errors like "AutoGluon yüklü değil" and "Gerekli bileşen yüklü değil" return HTTP 500 (server error) instead of 503 (service unavailable). These only fire if pip install failed during Docker build, meaning the Docker image itself is broken. Won't happen in normal operation with a correctly built image.
+
+---
+
+### H1: CUDA_VISIBLE_DEVICES="" Affects All Threads During TS Training
+
+**File:** server.py | **Lines:** 3286-3300 | **Category:** Concurrency / GPU
+**Severity:** MEDIUM (accepted as design limitation)
+
+`os.environ["CUDA_VISIBLE_DEVICES"] = ""` is process-global. During timeseries training (up to 600s), concurrent Whisper and embedding operations see no GPU and degrade to CPU. The llama-server subprocess is unaffected (inherited env at startup). No clean fix without moving TS training to a subprocess. Documented as known limitation.
+
+---
+
 ## Summary
 
-| Category | Total | Fixed | Accepted | False Positive (excluded) |
+| Category | Total | Fixed | Accepted/Unfixed | False Positive (excluded) |
 |---|---|---|---|---|
 | CRITICAL | 5 | **5** | 0 | 2 (removed) |
 | HIGH | 7 | **6** | 1 | 3 (removed) |
 | MEDIUM | 21 | **21** | 0 | 1 (removed) |
 | LOW | 8 | 0 | **8** | 0 |
-| **Total** | **41** | **32** | **9** | **6** |
+| Verification scan | 2 | **2** | **5** | 2 (removed) |
+| **Total** | **43** | **34** | **14** | **8** |
