@@ -581,8 +581,12 @@ def _load_text_pipeline_config(model_id):
     config_path = MODELS_DIR / model_id / "text_pipeline.json"
     if not config_path.exists():
         return None
-    with open(config_path, "r") as f:
-        return json.load(f)
+    try:
+        with open(config_path, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        log.warning(f"[TextPipeline] Corrupted config: {config_path}")
+        return None
 
 
 # ── Configuration ──────────────────────────────────────────────────
@@ -2068,8 +2072,8 @@ class ModelCache:
                         predictor = TabularPredictor.load(ag_path)
                     self.put(model_id, predictor, task_type)
                     return predictor
-                except Exception:
-                    traceback.print_exc()
+                except Exception as e2:
+                    log.warning(f"[ModelCache] Retry failed: {e2}")
                     return None
             raise
         except Exception:
@@ -2451,6 +2455,11 @@ def _collect_inner_objects(predictor, model_name: str) -> list:
     return candidates
 
 
+def _sql_bracket(col: str) -> str:
+    """Escape column name for MSSQL bracket notation. Doubles ] to prevent injection."""
+    return f"[{str(col).replace(']', ']]')}]"
+
+
 def _try_lightgbm_sql(obj, feature_columns: list) -> str:
     try:
         booster = getattr(obj, 'booster_', None)
@@ -2557,14 +2566,14 @@ def _try_linear_sql(obj, feature_columns: list, target_col: str, table_name: str
             if i < len(feature_columns):
                 c = feature_columns[i]
                 coef_val = round(float(coef), 8)
-                terms.append(f"ISNULL({coef_val} * TRY_CAST([{c}] AS FLOAT), 0)")
+                terms.append(f"ISNULL({coef_val} * TRY_CAST({_sql_bracket(c)} AS FLOAT), 0)")
         expression = " + ".join(terms)
-        col_list = ", ".join([f"[{c}]" for c in feature_columns])
-        null_check = " OR ".join([f"[{c}] IS NULL" for c in feature_columns])
+        col_list = ", ".join([_sql_bracket(c) for c in feature_columns])
+        null_check = " OR ".join([f"{_sql_bracket(c)} IS NULL" for c in feature_columns])
         return f"""SELECT
     {col_list},
-    ({expression}) AS [{target_col}_predicted],
-    CASE WHEN {null_check} THEN 0 ELSE 1 END AS [{target_col}_prediction_valid]
+    ({expression}) AS {_sql_bracket(f"{target_col}_predicted")},
+    CASE WHEN {null_check} THEN 0 ELSE 1 END AS {_sql_bracket(f"{target_col}_prediction_valid")}
 FROM {table_name};"""
     except Exception:
         pass
@@ -2607,17 +2616,18 @@ def generate_tree_sql(predictor, model_name: str, feature_columns: list, target_
 
         clean_col_defs = []
         for c in feature_columns:
+            bc = _sql_bracket(c)
             clean_col_defs.append(
                 f"        CASE\n"
-                f"            WHEN [{c}] IS NULL THEN NULL\n"
-                f"            WHEN TRY_CAST([{c}] AS FLOAT) IS NOT NULL\n"
-                f"                 AND TRY_CAST([{c}] AS FLOAT) <> TRY_CAST([{c}] AS FLOAT)\n"
+                f"            WHEN {bc} IS NULL THEN NULL\n"
+                f"            WHEN TRY_CAST({bc} AS FLOAT) IS NOT NULL\n"
+                f"                 AND TRY_CAST({bc} AS FLOAT) <> TRY_CAST({bc} AS FLOAT)\n"
                 f"                 THEN NULL\n"
-                f"            ELSE [{c}]\n"
-                f"        END AS [{c}]"
+                f"            ELSE {bc}\n"
+                f"        END AS {bc}"
             )
 
-        col_list = ", ".join([f"[{c}]" for c in feature_columns])
+        col_list = ", ".join([_sql_bracket(c) for c in feature_columns])
         clean_cols_sql = ",\n".join(clean_col_defs)
 
         sql = f"""-- ═══════════════════════════════════════════════════════════════
@@ -2639,10 +2649,10 @@ NullSafeData AS (
 )
 SELECT
     {col_list},
-    ({sql_expression}) AS [{target_col}_predicted],
-    CASE WHEN {" OR ".join([f"[{c}] IS NULL" for c in feature_columns])}
+    ({sql_expression}) AS {_sql_bracket(f"{target_col}_predicted")},
+    CASE WHEN {" OR ".join([f"{_sql_bracket(c)} IS NULL" for c in feature_columns])}
          THEN 0 ELSE 1
-    END AS [{target_col}_prediction_valid]
+    END AS {_sql_bracket(f"{target_col}_prediction_valid")}
 FROM NullSafeData;
 """
         return sql
@@ -2675,7 +2685,7 @@ def _tree_to_case_when(tree_dict: dict, feature_names: list, node_id: int = 0, _
         return str(round(v, 6))
 
     feat_idx = features[node_id]
-    feat_name = f"[{feature_names[feat_idx]}]" if 0 <= feat_idx < len(feature_names) else f"[f{feat_idx}]"
+    feat_name = _sql_bracket(feature_names[feat_idx]) if 0 <= feat_idx < len(feature_names) else _sql_bracket(f"f{feat_idx}")
     threshold = float(thresholds[node_id])
     if math.isnan(threshold) or math.isinf(threshold):
         return "0"
@@ -2721,11 +2731,11 @@ def _xgb_node_to_sql(node: dict, feature_columns: list, _depth: int = 0) -> str:
     if split_feature.startswith('f') and split_feature[1:].isdigit():
         feat_idx = int(split_feature[1:])
         if feat_idx < len(feature_columns):
-            feat_name = f"[{feature_columns[feat_idx]}]"
+            feat_name = _sql_bracket(feature_columns[feat_idx])
         else:
-            feat_name = f"[{split_feature}]"
+            feat_name = _sql_bracket(split_feature)
     else:
-        feat_name = f"[{split_feature}]"
+        feat_name = _sql_bracket(split_feature)
     children = node.get('children', [])
     if len(children) >= 2:
         yes_child = children[0]
@@ -2752,11 +2762,11 @@ def _lgbm_node_to_sql(node: dict, feature_columns: list, _depth: int = 0) -> str
     decision_type = node.get('decision_type', '<=')
     if isinstance(split_feature, int):
         if split_feature < len(feature_columns):
-            feat_name = f"[{feature_columns[split_feature]}]"
+            feat_name = _sql_bracket(feature_columns[split_feature])
         else:
-            feat_name = f"[f{split_feature}]"
+            feat_name = _sql_bracket(f"f{split_feature}")
     else:
-        feat_name = f"[{split_feature}]"
+        feat_name = _sql_bracket(split_feature)
     left_sql = _lgbm_node_to_sql(node.get('left_child', {'leaf_value': 0}), feature_columns, _depth + 1)
     right_sql = _lgbm_node_to_sql(node.get('right_child', {'leaf_value': 0}), feature_columns, _depth + 1)
     op = "<=" if decision_type == "<=" else "<"
@@ -2800,7 +2810,7 @@ def generate_airflow_dag(model_id: str, model_name: str, submodel_name: str,
         embedding_imports = "\nfrom sentence_transformers import SentenceTransformer"
         embedding_constants = f"""
 TEXT_COLUMNS = {json.dumps(text_columns)}
-EMBEDDING_MODEL = "{embedding_model or DEFAULT_EMBEDDING_MODEL}"
+EMBEDDING_MODEL = {json.dumps(embedding_model or DEFAULT_EMBEDDING_MODEL)}
 """
         embedding_function = """
 
@@ -2917,7 +2927,7 @@ def clean_dataframe(df):
 def validate_input(**kwargs):
     if not os.path.exists(INPUT_CSV_PATH):
         raise FileNotFoundError(f"Girdi dosyasi bulunamadi: {{INPUT_CSV_PATH}}")
-    df = pd.read_csv(INPUT_CSV_PATH)
+    df = pd.read_csv(INPUT_CSV_PATH, encoding='utf-8-sig')
     missing = set(FEATURE_COLUMNS) - set(df.columns)
     if missing:
         raise ValueError(f"Eksik sutunlar: {{missing}}")
@@ -2930,7 +2940,7 @@ def validate_input(**kwargs):
 def load_and_predict(**kwargs):
     from autogluon.tabular import TabularPredictor
     predictor = TabularPredictor.load(MODEL_PATH)
-    input_df = pd.read_csv(INPUT_CSV_PATH)
+    input_df = pd.read_csv(INPUT_CSV_PATH, encoding='utf-8-sig')
     input_df, error_rows, cleaning_report = clean_dataframe(input_df)
     for msg in cleaning_report:
         logger.info(f"  [Temizlik] {{msg}}")
@@ -3089,7 +3099,7 @@ def clean_timeseries(df):
 def validate_input(**kwargs):
     if not os.path.exists(INPUT_CSV_PATH):
         raise FileNotFoundError(f"Girdi dosyasi bulunamadi: {{INPUT_CSV_PATH}}")
-    df = pd.read_csv(INPUT_CSV_PATH)
+    df = pd.read_csv(INPUT_CSV_PATH, encoding='utf-8-sig')
 
     if TIMESTAMP_COLUMN not in df.columns:
         raise ValueError(f"Zaman damgasi sutunu '{{TIMESTAMP_COLUMN}}' bulunamadi")
@@ -3109,7 +3119,7 @@ def load_and_forecast(**kwargs):
     predictor = TimeSeriesPredictor.load(MODEL_PATH)
 
     # Girdiyi oku ve temizle
-    input_df = pd.read_csv(INPUT_CSV_PATH)
+    input_df = pd.read_csv(INPUT_CSV_PATH, encoding='utf-8-sig')
     input_df, cleaning_report = clean_timeseries(input_df)
     for msg in cleaning_report:
         logger.info(f"  [Temizlik] {{msg}}")
@@ -3217,6 +3227,7 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
     if not model_ref_counter.acquire(model_id):
         training_jobs[job_id]["status"] = "error"
         training_jobs[job_id]["error"] = "Model siliniyor, eğitim başlatılamadı."
+        user_action_tracker.unregister(username, "training")
         return
     try:
         # Acquire resources
@@ -3231,14 +3242,21 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
 
         training_jobs[job_id]["status"] = "training"
 
-        df = pd.read_csv(csv_path)
+        try:
+            df = pd.read_csv(csv_path, encoding='utf-8-sig')
+        except Exception as e:
+            raise ValueError(f"CSV dosyası okunamadı. Dosya formatını kontrol edin: {str(e)[:100]}")
+
+        dupes = df.columns[df.columns.duplicated()].tolist()
+        if dupes:
+            log.warning(f"[Training] Duplicate columns detected and auto-renamed: {dupes[:5]}")
 
         # ══════════════════════════════════════════════════════════
         #  TIME SERIES TRAINING PATH
         # ══════════════════════════════════════════════════════════
         if task_type == "timeseries":
             if not AUTOGLUON_TS_AVAILABLE:
-                raise ValueError("autogluon.timeseries yüklü değil. pip install autogluon.timeseries")
+                raise ValueError("Gerekli bileşen yüklü değil. Lütfen sistem yöneticisine bildirin.")
 
             df, cleaning_report = clean_dataframe(df, context="timeseries",
                                                   timestamp_column=timestamp_column)
@@ -3249,7 +3267,10 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
                 raise ValueError(f"Zaman damgası sütunu '{timestamp_column}' veride bulunamadı")
 
             # Ensure datetime type
-            df[timestamp_column] = pd.to_datetime(df[timestamp_column])
+            try:
+                df[timestamp_column] = pd.to_datetime(df[timestamp_column])
+            except (ValueError, TypeError) as e:
+                raise ValueError(f"Zaman damgası sütunundaki tarihler ayrıştırılamadı: {str(e)[:100]}")
 
             # Handle item_id: if user has single series, create a dummy ID
             if item_id_column and item_id_column in df.columns:
@@ -3266,11 +3287,20 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
                 raise ValueError(f"Temizlik sonrası sadece {len(df)} satır kaldı. En az 20 satır gerekli.")
 
             # Build TimeSeriesDataFrame — NO random split, predictor handles chrono split
-            ts_df = TimeSeriesDataFrame.from_data_frame(
-                df,
-                id_column=id_col,
-                timestamp_column=timestamp_column,
-            )
+            try:
+                ts_df = TimeSeriesDataFrame.from_data_frame(
+                    df,
+                    id_column=id_col,
+                    timestamp_column=timestamp_column,
+                )
+            except (ValueError, KeyError) as e:
+                raise ValueError(f"Zaman serisi verisi oluşturulamadı. Veri formatını kontrol edin: {str(e)[:100]}")
+
+            if prediction_length >= len(df) // 2:
+                raise ValueError(f"Tahmin uzunluğu ({prediction_length}) veri uzunluğunun yarısından ({len(df)//2}) küçük olmalı.")
+
+            if df[target_col].nunique() < 2:
+                raise ValueError("Hedef sütundaki tüm değerler aynı. Zaman serisi tahmini yapılamaz.")
 
             ag_model_path = str(MODELS_DIR / model_id / "agmodel")
 
@@ -3407,6 +3437,10 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
         numeric_cols = df.select_dtypes(include=[np.number]).columns
         df[numeric_cols] = df[numeric_cols].replace([np.inf, -np.inf], np.nan)
 
+        # Also handle mixed-type columns that may contain infinity strings
+        for col in df.select_dtypes(include=['object']).columns:
+            df[col] = df[col].replace(['inf', '-inf', 'Inf', '-Inf'], np.nan)
+
         # ── Auto-detect text columns and convert to embeddings ──
         # A column is "text" if it's object/string AND has average length > 30 chars
         # (short strings like "Yes"/"No" or "Male"/"Female" are just categoricals)
@@ -3422,6 +3456,9 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
 
         # Save original feature names (human-readable) before embedding
         feature_cols_original = [c for c in df.columns if c != target_col]
+
+        if not feature_cols_original:
+            raise ValueError("CSV'de en az bir özellik sütunu olmalı. Yalnızca hedef sütun tespit edildi.")
 
         if text_columns:
             embedding_model_name = DEFAULT_EMBEDDING_MODEL
@@ -3571,6 +3608,11 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
             meta["text_columns"] = text_columns
             meta["embedding_model"] = embedding_model_name
             meta["feature_columns_embedded"] = feature_cols_embedded
+            try:
+                _emb_model = _get_sentence_model(embedding_model_name)
+                meta["embedding_dim"] = _emb_model.get_sentence_embedding_dimension()
+            except Exception:
+                pass
 
         save_model_meta(model_id, meta)
 
@@ -3667,7 +3709,8 @@ def _get_whisper_model():
 
                 # Solution 7: Pre-emptive eviction if VRAM is tight
                 if whisper_uses_gpu and vram_needed > 0:
-                    _ensure_vram_available(vram_needed)
+                    if not _ensure_vram_available(vram_needed):
+                        log.warning(f"[VRAM] Pre-eviction insufficient: needed {vram_needed}MB")
 
                 if not resource_manager.try_acquire("whisper_model", "whisper_load",
                                                      vram_mb=vram_needed,
@@ -3752,7 +3795,7 @@ def _transcribe_audio(audio_path: str, language: str) -> str:
     """Transcribe an audio file using faster-whisper."""
     global _whisper_last_used
     if not FASTER_WHISPER_AVAILABLE:
-        raise RuntimeError("faster-whisper yüklü değil. pip install faster-whisper")
+        raise RuntimeError("Gerekli bileşen yüklü değil. Lütfen sistem yöneticisine bildirin.")
     if not os.path.isfile(audio_path) or os.path.getsize(audio_path) == 0:
         raise ValueError(f"Ses dosyası boş veya bulunamadı: {os.path.basename(audio_path)}")
     model = _get_whisper_model()
@@ -3851,7 +3894,7 @@ def _call_llm(messages: list, max_retries: int = 3) -> dict:
     Uses exponential backoff: 2s, 4s, 8s between retries.
     """
     if not REQUESTS_AVAILABLE:
-        raise RuntimeError("requests yüklü değil. pip install requests")
+        raise RuntimeError("Gerekli bileşen yüklü değil. Lütfen sistem yöneticisine bildirin.")
 
     _ensure_llama_running()
 
@@ -3894,6 +3937,8 @@ def _call_llm(messages: list, max_retries: int = 3) -> dict:
                     json_str = json_str[start:end]
 
             result = json.loads(json_str)
+            if not isinstance(result, dict) or not result:
+                raise json.JSONDecodeError("LLM boş veya geçersiz JSON döndü", json_str, 0)
             if attempt > 1:
                 log.info(f"  [LLM] Succeeded on attempt {attempt}/{max_retries}")
             return result
@@ -3973,7 +4018,7 @@ def _compute_evaluation_metrics(results: list, schema: list) -> dict:
                     "rmse": round(rmse, 4),
                 }
             except (ValueError, TypeError) as e:
-                metrics[var_name] = {"type": "regression", "n": len(actuals), "error": str(e)}
+                metrics[var_name] = {"type": "regression", "n": len(actuals), "error": _sanitize_error(e)}
 
     return metrics
 
@@ -5187,7 +5232,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                 return self.send_json({"error": "Dosya yazılamadı. Sunucu diski dolu olabilir."}, 507)
 
             try:
-                df_sample = pd.read_csv(csv_path, nrows=100)
+                df_sample = pd.read_csv(csv_path, nrows=100, encoding='utf-8-sig')
                 df_preview = df_sample.head(5).copy()
                 columns = list(df_sample.columns)
                 dtypes = {col: str(df_sample[col].dtype) for col in df_sample.columns}
@@ -5430,7 +5475,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
 
         # Solution 7: Pre-emptive eviction if VRAM tight
         if _pred_vram > 0:
-            _ensure_vram_available(_pred_vram + 300)
+            if not _ensure_vram_available(_pred_vram + 300):
+                log.warning(f"[VRAM] Pre-eviction insufficient: needed {_pred_vram + 300}MB")
 
         if not resource_manager.try_acquire(_pred_resource_id, "prediction_model_load",
                                             vram_mb=_pred_vram,
@@ -5533,12 +5579,20 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                 if not SENTENCE_TRANSFORMERS_AVAILABLE:
                     return self.send_json({"error": "sentence-transformers yüklü değil"}, 500)
                 embedding_model_name = meta.get("embedding_model", DEFAULT_EMBEDDING_MODEL)
+                # Verify embedding dimension matches training
+                _emb_dim_expected = meta.get("embedding_dim")
+                if _emb_dim_expected:
+                    _emb_model = _get_sentence_model(embedding_model_name)
+                    if _emb_model.get_sentence_embedding_dimension() != _emb_dim_expected:
+                        return self.send_json({"error": "Embedding model boyutu eğitim ile uyuşmuyor"}, 400)
                 for col in _pred_text_cols_present:
                     input_df[col] = input_df[col].fillna("")
                 input_df = _embed_text_columns(input_df, _pred_text_cols_present,
                                                 embedding_model_name, show_progress=False)
 
             prediction = predictor.predict(input_df, model=submodel_name)
+            if len(prediction) == 0:
+                return self.send_json({"error": "Tahmin sonucu boş döndü"}, 400)
             result = {"prediction": sanitize_value(prediction.iloc[0])}
 
             if meta.get("problem_type") in ("binary", "multiclass") or meta.get("task_type") == "classification":
@@ -5640,7 +5694,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
 
         # Solution 7: Pre-emptive eviction
         if _bp_vram > 0:
-            _ensure_vram_available(_bp_vram + 300)
+            if not _ensure_vram_available(_bp_vram + 300):
+                log.warning(f"[VRAM] Pre-eviction insufficient: needed {_bp_vram + 300}MB")
 
         if not resource_manager.try_acquire(_bpred_resource_id, "prediction_model_load",
                                             vram_mb=_bp_vram,
@@ -5658,9 +5713,12 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                 csv_data = parts.get("file", {}).get("data")
                 if not csv_data:
                     return self.send_json({"error": "CSV dosyası bulunamadı"}, 400)
-                input_df = pd.read_csv(io.BytesIO(csv_data))
+                input_df = pd.read_csv(io.BytesIO(csv_data), encoding='utf-8-sig')
             else:
-                data = json.loads(body)
+                try:
+                    data = json.loads(body)
+                except (json.JSONDecodeError, ValueError):
+                    return self.send_json({"error": "Geçersiz JSON verisi"}, 400)
                 input_df = pd.DataFrame(data.get("rows", []))
 
             if len(input_df) > MAX_BATCH_ROWS:
@@ -5699,6 +5757,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                 predictions = ts_predictor.predict(ts_df, model=submodel_name)
 
                 output_df = predictions.reset_index()
+                if len(output_df) == 0:
+                    return self.send_json({"error": "Zaman serisi toplu tahmin sonucu boş döndü"}, 400)
                 csv_buffer = io.StringIO()
                 output_df.to_csv(csv_buffer, index=False)
                 csv_string = csv_buffer.getvalue()
@@ -6206,7 +6266,7 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         _is_text_model = bool(_text_columns_for_explainability)
         if _is_text_model and not SENTENCE_TRANSFORMERS_AVAILABLE:
             return self.send_json({
-                "error": "sentence-transformers yüklü değil. pip install sentence-transformers",
+                "error": "Gerekli bileşen yüklü değil. Lütfen sistem yöneticisine bildirin.",
             }, 500)
 
         # Time series explainability analysis
@@ -6218,7 +6278,7 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                 if not csv_path.exists():
                     return self.send_json({"error": "Eğitim verisi bulunamadı"}, 404)
 
-                df = pd.read_csv(csv_path)
+                df = pd.read_csv(csv_path, encoding='utf-8-sig')
                 target_col = meta["target_column"]
                 ts_col = meta.get("timestamp_column")
                 id_col = meta.get("item_id_column", "__item_id")
@@ -6671,7 +6731,7 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             if not csv_path.exists():
                 return self.send_json({"error": "Eğitim verisi bulunamadı"}, 404)
 
-            df = pd.read_csv(csv_path)
+            df = pd.read_csv(csv_path, encoding='utf-8-sig')
             target_col = meta["target_column"]
             feature_cols = meta["feature_columns"]
 
@@ -6868,7 +6928,7 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             # Correlation analysis
             # For text models, reload original df for correlation since embedding replaced text cols
             if _is_text_model:
-                corr_df = pd.read_csv(csv_path)
+                corr_df = pd.read_csv(csv_path, encoding='utf-8-sig')
                 corr_df, _ = clean_dataframe(corr_df, context="prediction")
                 corr_df = corr_df.dropna(subset=[target_col])
             else:
@@ -6994,9 +7054,9 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             return self.send_json({"error": "Saatlik işlem limitinize ulaştınız. Lütfen daha sonra tekrar deneyin."}, 429)
 
         if not FASTER_WHISPER_AVAILABLE:
-            return self.send_json({"error": "faster-whisper yüklü değil. pip install faster-whisper"}, 500)
+            return self.send_json({"error": "Gerekli bileşen yüklü değil. Lütfen sistem yöneticisine bildirin."}, 500)
         if not REQUESTS_AVAILABLE:
-            return self.send_json({"error": "requests yüklü değil. pip install requests"}, 500)
+            return self.send_json({"error": "Gerekli bileşen yüklü değil. Lütfen sistem yöneticisine bildirin."}, 500)
 
         # Per-user model quota check (atomic to prevent TOCTOU bypass)
         if not check_and_reserve_model_quota(user["username"]):
@@ -7139,9 +7199,9 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             return self.send_json({"error": "Saatlik işlem limitinize ulaştınız. Lütfen daha sonra tekrar deneyin."}, 429)
 
         if not FASTER_WHISPER_AVAILABLE:
-            return self.send_json({"error": "faster-whisper yüklü değil. pip install faster-whisper"}, 500)
+            return self.send_json({"error": "Gerekli bileşen yüklü değil. Lütfen sistem yöneticisine bildirin."}, 500)
         if not REQUESTS_AVAILABLE:
-            return self.send_json({"error": "requests yüklü değil. pip install requests"}, 500)
+            return self.send_json({"error": "Gerekli bileşen yüklü değil. Lütfen sistem yöneticisine bildirin."}, 500)
 
         meta = load_model_meta(model_id)
         if not meta:
