@@ -3311,23 +3311,13 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
                 eval_metric="MASE",
             )
 
-            # Hide GPU from TimeSeriesPredictor to prevent Ray/CUDA crashes
-            # (TimeSeriesPredictor doesn't support num_gpus param)
-            _ts_saved_cuda = os.environ.get("CUDA_VISIBLE_DEVICES")
-            os.environ["CUDA_VISIBLE_DEVICES"] = ""
-            try:
-                ts_predictor.fit(
-                    train_data=ts_df,
-                    presets=preset if preset in ("fast_training", "medium_quality",
-                                                 "high_quality", "best_quality") else "medium_quality",
-                    time_limit=600,
-                    verbosity=1,
-                )
-            finally:
-                if _ts_saved_cuda is not None:
-                    os.environ["CUDA_VISIBLE_DEVICES"] = _ts_saved_cuda
-                else:
-                    os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+            ts_predictor.fit(
+                train_data=ts_df,
+                presets=preset if preset in ("fast_training", "medium_quality",
+                                             "high_quality", "best_quality") else "medium_quality",
+                time_limit=600,
+                verbosity=1,
+            )
 
             leaderboard = ts_predictor.leaderboard(silent=True)
             if len(leaderboard) == 0:
