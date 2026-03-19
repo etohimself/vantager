@@ -43,7 +43,7 @@ RUN git clone --depth 1 https://github.com/ggml-org/llama.cpp.git /tmp/llama.cpp
     cd /tmp/llama.cpp && \
     cmake -B build \
         -DGGML_CUDA=ON \
-        -DCMAKE_CUDA_ARCHITECTURES="61;70;75;80;86;89;90" \
+        -DCMAKE_CUDA_ARCHITECTURES='61;70;75;80;86;89;90' \
         -DLLAMA_CURL=ON \
         -DCMAKE_BUILD_TYPE=Release && \
     cmake --build build --config Release -j$(nproc) --target llama-server && \
