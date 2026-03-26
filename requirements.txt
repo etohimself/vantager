@@ -17,7 +17,7 @@ autogluon.multimodal>=1.2,<2.0
 
 # ── Speech-to-Text (Whisper) ──
 faster-whisper>=1.0.0,<2.0
-ctranslate2>=4.0.0,<4.5  # 4.5+ requires CUDA 12.3+ and cuDNN 9; our image has CUDA 12.1
+ctranslate2>=4.0.0,<4.5  # 4.5+ requires CUDA 12.3+ and cuDNN 9; stick with 12.1-compatible builds
 
 # ── Text Embeddings (NLP without heavy GPU training) ──
 sentence-transformers>=3.0.0,<4.0

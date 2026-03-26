@@ -600,7 +600,7 @@ ACTIVITY_FILE = DATA_DIR / "activity.json"
 USERS_FILE = DATA_DIR / "users.json"
 SESSIONS_FILE = DATA_DIR / "sessions.json"
 
-# Ensure directories exist (handles Docker named volumes where /app/data may be root-owned)
+# Ensure directories exist
 try:
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     (DATA_DIR / "temp").mkdir(parents=True, exist_ok=True)
@@ -608,7 +608,7 @@ try:
 except PermissionError:
     uid = getattr(os, 'getuid', lambda: 'unknown')()
     log.error(f"Cannot create data directories at {DATA_DIR}. "
-              f"If running in Docker, ensure the volume is writable by appuser (uid={uid}).")
+              f"Check that the current user (uid={uid}) has write permissions.")
     sys.exit(1)
 
 # ── Request size limits ───────────────────────────────────────────
@@ -1586,7 +1586,7 @@ LLAMA_CPP_MODEL = os.environ.get("LLAMA_CPP_MODEL", "local-model")
 # ── Bundled llama.cpp server ─────────────────────────────────────
 # LLAMA_BUNDLED="auto" (default): download & start llama-server automatically
 # if nothing is already listening on LLAMA_PORT.  Binary + model are cached
-# in DATA_DIR/llm/ (Docker named volume — survives container restarts).
+# in DATA_DIR/llm/ (persists across restarts).
 # Set "false" to disable, "true" to force start even if port is in use.
 _llama_process = None
 _llama_log_fh = None
@@ -1643,8 +1643,7 @@ def _download_llama_server():
         arch = "arm64" if _plat.machine() == "arm64" else "x64"
         patterns, ext = [f"macos-{arch}"], ".tar.gz"
     else:
-        # Prefer pre-compiled CUDA binary from Docker build.
-        # Fallback: download CPU-only binary (no Linux CUDA binaries in releases since b8413+).
+        # Download pre-compiled binary (CPU-only; no Linux CUDA binaries in releases since b8413+).
         patterns = ["ubuntu-x64"]
         ext = ".tar.gz"
 

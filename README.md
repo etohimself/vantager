@@ -25,98 +25,66 @@ All features are accessible through a single web UI at `http://localhost:8080`.
 
 ## Quick Start
 
-### Option A: Docker (recommended)
-
 ```bash
-# Build
-docker build -t tahmin-platformu .
+git clone git@github.com:etohimself/vantager.git
+cd vantager
 
-# Run with GPU
-docker run --gpus all -p 8080:8080 \
-  -e ADMIN_PASSWORD=YourSecurePassword \
-  -v tahmin-data:/app/data \
-  tahmin-platformu
-```
-
-Open **http://localhost:8080** and log in with `admin` / `YourSecurePassword`.
-
-### Option B: Run directly (development)
-
-```bash
 python3.11 -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt
+
 python server.py
 ```
 
-> First launch creates a default admin account (`admin` / `Admin123!`).
+Open **http://localhost:8080** and log in with `admin` / `Admin123!`.
+
 > Set `ADMIN_PASSWORD` env var in production.
 
 ---
 
-## Deploy on RunPod
+## Deploy on a GPU Instance
 
-### 1. Push your Docker image
+This works on any GPU instance (Vast.ai, RunPod, Lambda, bare-metal, etc.)
 
-Build and push to a container registry (GitHub Container Registry shown here):
+### 1. First-time setup on the instance
 
 ```bash
-# One-time: log in to GHCR
-echo $GHCR_TOKEN | docker login ghcr.io -u YOUR_GITHUB_USER --password-stdin
+# Clone the repo
+git clone git@github.com:etohimself/vantager.git
+cd vantager
 
-# Build & push
-docker build -t ghcr.io/YOUR_GITHUB_USER/tahmin-platformu:latest .
-docker push ghcr.io/YOUR_GITHUB_USER/tahmin-platformu:latest
+# Create virtualenv and install deps
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# (Optional) Set environment variables
+export ADMIN_PASSWORD=YourSecurePassword
+export DATA_DIR=/workspace/data        # or wherever you want persistent data
+
+# Start
+chmod +x start.sh
+./start.sh
 ```
 
-### 2. Create a RunPod template
+### 2. Updating (after git push)
 
-Go to [runpod.io/console/user/templates](https://runpod.io/console/user/templates) and create a new template:
+```bash
+cd vantager
+git pull
+source .venv/bin/activate
+pip install -r requirements.txt   # only needed if deps changed
+./start.sh
+```
 
-| Field | Value |
-|---|---|
-| **Container Image** | `ghcr.io/YOUR_GITHUB_USER/tahmin-platformu:latest` |
-| **Container Disk** | 20 GB (for OS + Python packages) |
-| **Volume Disk** | 50 GB+ (for ML models, data) |
-| **Volume Mount Path** | `/workspace` |
-| **Expose HTTP Ports** | `8080` |
-| **Environment Variables** | See table below |
+### 3. Running with Cloudflare Tunnel
 
-Set these environment variables in the template:
+```bash
+export CLOUDFLARE_TUNNEL_TOKEN=your-token
+./start.sh
+```
 
-| Variable | Value | Why |
-|---|---|---|
-| `ADMIN_PASSWORD` | (your password) | Secure the admin account |
-| `DATA_DIR` | `/workspace/data` | Persist data on the network volume |
-
-### 3. Launch a pod
-
-Select your template, pick a GPU (RTX 3090/4090 or A100 recommended), and deploy.
-Your app will be available at the RunPod proxy URL shown in the pod dashboard.
-
-> **Tip:** Using a network volume (`/workspace`) means your trained models, user accounts, and LLM cache survive pod restarts and even pod deletion.
-
-### CI/CD with GitHub Actions
-
-A workflow is included at `.github/workflows/docker.yml`. On every push to `main`, it:
-
-1. Builds the Docker image with BuildKit layer caching
-2. Pushes to GitHub Container Registry (`ghcr.io`)
-3. Tags with both `latest` and the commit SHA
-
-**Setup:** No secrets needed — `GITHUB_TOKEN` is automatic. Just push to `main` and the image builds.
-
-**Deploy:** After the image is pushed, restart your RunPod pod to pull the latest version. Or add a webhook to auto-restart (see RunPod API docs).
-
-### RunPod with Persistent Storage (Budget-Friendly)
-
-For maximum uptime on cheap spot/community GPUs:
-
-1. **Create a Network Volume** on RunPod (50GB+) in your preferred region
-2. **Set `DATA_DIR=/workspace/data`** in your pod template — all models, users, and caches survive pod restarts
-3. **Use spot/community GPUs** — if the pod is reclaimed, your data is safe on the network volume
-4. **Recreate the pod** pointing to the same network volume — everything resumes instantly
-5. **Optional:** Use the RunPod API to script automatic pod recreation on termination
+The tunnel exposes the app on your Cloudflare domain without opening ports.
 
 ---
 
@@ -192,13 +160,7 @@ data/
 └── activity.json    # Training & prediction activity log
 ```
 
-**In Docker**, mount a named volume to `/app/data` to persist data across container restarts:
-
-```bash
-docker run --gpus all -p 8080:8080 -v tahmin-data:/app/data tahmin-platformu
-```
-
-**On RunPod**, set `DATA_DIR=/workspace/data` to use the network volume.
+> **Tip:** On cloud instances, point `DATA_DIR` to a persistent volume (e.g., `/workspace/data` on RunPod/Vast.ai) so trained models and user data survive instance restarts.
 
 ---
 

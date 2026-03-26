@@ -114,7 +114,7 @@ After the 120-second startup health-check loop expires, `_llama_process.kill()` 
 **File:** server.py | **Lines:** 5289, 5575, 6262 + others | **Category:** HTTP Status Codes
 **Severity:** LOW (accepted)
 
-Errors like "AutoGluon yüklü değil" and "Gerekli bileşen yüklü değil" return HTTP 500 (server error) instead of 503 (service unavailable). These only fire if pip install failed during Docker build, meaning the Docker image itself is broken. Won't happen in normal operation with a correctly built image.
+Errors like "AutoGluon yüklü değil" and "Gerekli bileşen yüklü değil" return HTTP 500 (server error) instead of 503 (service unavailable). These only fire if pip install failed, meaning the environment is broken. Won't happen in normal operation with a correct install.
 
 ---
 

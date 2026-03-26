@@ -4,11 +4,11 @@
 
 set -e
 
-# Create data directories (handles both /app/data and custom DATA_DIR)
-DATA="${DATA_DIR:-/app/data}"
+# Create data directories
+DATA="${DATA_DIR:-./data}"
 mkdir -p "${DATA}"/{models,temp,stt,llm,cache/huggingface,cache/sentence_transformers}
 
-# Point ML model caches to DATA_DIR so they persist on mounted volumes
+# Point ML model caches to DATA_DIR so they persist
 export HF_HOME="${DATA}/cache/huggingface"
 export SENTENCE_TRANSFORMERS_HOME="${DATA}/cache/sentence_transformers"
 
