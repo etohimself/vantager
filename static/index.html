@@ -756,6 +756,29 @@
             return;
         }
 
+        // Check if user has an active audio evaluation job
+        const audioActiveCheck = await api('/api/audio-evaluate/active');
+        if (audioActiveCheck.active && audioActiveCheck.job_id) {
+            app().innerHTML = `
+            <div class="fade-in max-w-3xl mx-auto">
+                <div class="mb-8">
+                    <h1 class="text-3xl font-bold tracking-tight text-slate-900 mb-1">Ses Analizi Devam Ediyor</h1>
+                    <p class="text-slate-500 text-sm">Daha \u00f6nce ba\u015flat\u0131lan ses analizi h\u00e2l\u00e2 \u00e7al\u0131\u015f\u0131yor</p>
+                </div>
+                <div class="card p-10 text-center">
+                    <div class="spinner mx-auto mb-5"></div>
+                    <h3 class="font-bold text-xl text-slate-800 mb-2">Ses dosyalar\u0131 i\u015fleniyor...</h3>
+                    <p class="text-slate-500 text-sm mb-4">Ses kay\u0131tlar\u0131 yaz\u0131ya d\u00f6k\u00fcl\u00fcp de\u011ferlendiriliyor</p>
+                    <div class="progress-bar w-72 mx-auto">
+                        <div class="progress-bar-fill" id="audio-eval-bar" style="width: 5%"></div>
+                    </div>
+                    <p class="text-slate-400 text-xs mt-3" id="audio-eval-status-text">Devam eden analiz kontrol ediliyor...</p>
+                </div>
+            </div>`;
+            pollAudioEvalStatus(audioActiveCheck.job_id);
+            return;
+        }
+
         const presets = await api('/api/presets');
         if (presets.error) return;
 
@@ -1349,9 +1372,23 @@
         fd.append('actuals', JSON.stringify(actuals));
         audioFiles.forEach(f => fd.append('audio_files', f, f.name));
 
-        // Show progress
-        document.getElementById('start-audio-eval-btn').classList.add('hidden');
-        document.getElementById('audio-eval-progress').classList.remove('hidden');
+        // Replace entire page with full-screen progress view
+        app().innerHTML = `
+        <div class="fade-in max-w-3xl mx-auto">
+            <div class="mb-8">
+                <h1 class="text-3xl font-bold tracking-tight text-slate-900 mb-1">Ses Analizi Devam Ediyor</h1>
+                <p class="text-slate-500 text-sm">Ses kay\u0131tlar\u0131 i\u015fleniyor, l\u00fctfen bekleyin</p>
+            </div>
+            <div class="card p-10 text-center">
+                <div class="spinner mx-auto mb-5"></div>
+                <h3 class="font-bold text-xl text-slate-800 mb-2">Ses dosyalar\u0131 i\u015fleniyor...</h3>
+                <p class="text-slate-500 text-sm mb-4">Ses kay\u0131tlar\u0131 yaz\u0131ya d\u00f6k\u00fcl\u00fcp de\u011ferlendiriliyor</p>
+                <div class="progress-bar w-72 mx-auto">
+                    <div class="progress-bar-fill" id="audio-eval-bar" style="width: 5%"></div>
+                </div>
+                <p class="text-slate-400 text-xs mt-3" id="audio-eval-status-text">Sunucuya g\u00f6nderiliyor...</p>
+            </div>
+        </div>`;
 
         try {
             const res = await fetch(API + '/api/audio-evaluate', {
@@ -1361,15 +1398,13 @@
             const data = await res.json();
             if (data.error) {
                 alert('Bir sorun olu\u015ftu: ' + data.error);
-                document.getElementById('start-audio-eval-btn').classList.remove('hidden');
-                document.getElementById('audio-eval-progress').classList.add('hidden');
+                navigate('/train');
                 return;
             }
             pollAudioEvalStatus(data.job_id);
         } catch (err) {
             alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
-            document.getElementById('start-audio-eval-btn').classList.remove('hidden');
-            document.getElementById('audio-eval-progress').classList.add('hidden');
+            navigate('/train');
         }
     }
 

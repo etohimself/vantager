@@ -4561,6 +4561,9 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             job_id = re.match(r"^/api/training/([a-f0-9-]+)/status$", path).group(1)
             return self.handle_training_status(job_id)
 
+        elif path == "/api/audio-evaluate/active":
+            return self.handle_active_audio_eval()
+
         elif re.match(r"^/api/audio-evaluate/([a-f0-9-]+)/status$", path):
             job_id = re.match(r"^/api/audio-evaluate/([a-f0-9-]+)/status$", path).group(1)
             return self.handle_audio_eval_status(job_id)
@@ -7179,6 +7182,26 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             response["error"] = job.get("error", "Bilinmeyen hata")
 
         self.send_json(response)
+
+    def handle_active_audio_eval(self):
+        """Check if current user has an active audio evaluation job."""
+        user = self._require_auth()
+        if not user:
+            return
+        active = user_action_tracker.get_active(user["username"])
+        audio_job_id = active.get("audio_eval")
+        if audio_job_id:
+            job = audio_eval_jobs.get(audio_job_id)
+            if job and job.get("status") not in ("done", "error"):
+                return self.send_json({
+                    "active": True,
+                    "job_id": audio_job_id,
+                    "status": job.get("status"),
+                    "model_id": job.get("model_id"),
+                    "total": job.get("total", 0),
+                    "processed": job.get("processed", 0),
+                })
+        self.send_json({"active": False})
 
     # ── Audio Predict Handlers (run saved call_analysis models) ───
 
