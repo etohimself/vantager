@@ -129,6 +129,8 @@ def clean_dataframe(df, context="training", timestamp_column=None):
     import pandas as pd
     import numpy as np
 
+    df = df.copy()
+
     report = {
         "original_rows": len(df),
         "original_cols": len(df.columns),
