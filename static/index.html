@@ -78,13 +78,12 @@
         .section-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #94A3B8; margin-bottom: 12px; }
         .stat-card { background: #fff; border: 1px solid #CBD5E1; border-radius: 14px; padding: 20px; }
         .featured-card { background: linear-gradient(135deg, #ECFDF5, #fff); border: 1px solid #6EE7B7; border-radius: 14px; padding: 20px; }
-        .tip-cell { position: relative; max-width: 280px; overflow: visible !important; }
-        .tip-cell .tip-text { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default; }
-        .tip-cell .tip-box { display: none; position: absolute; bottom: calc(100% + 6px); left: 0; padding: 8px 14px; background: #1E293B; color: #fff; font-size: 12px; line-height: 1.5; border-radius: 8px; max-width: 400px; width: max-content; word-wrap: break-word; white-space: normal; z-index: 9999; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
-        .tip-cell:hover .tip-box { display: block; }
+        .tip-cell { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default; }
+        #global-tip { position: fixed; padding: 8px 14px; background: #1E293B; color: #fff; font-size: 12px; line-height: 1.5; border-radius: 8px; max-width: 400px; word-wrap: break-word; white-space: normal; z-index: 99999; box-shadow: 0 4px 16px rgba(0,0,0,0.2); pointer-events: none; display: none; }
     </style>
 </head>
 <body class="min-h-screen">
+    <div id="global-tip"></div>
     <nav id="main-nav" class="hidden bg-white sticky top-0 z-50 px-6 py-3 flex items-center justify-between" style="border-bottom: 1px solid #CBD5E1; box-shadow: 0 1px 4px rgba(0,0,0,0.07);">
         <div class="flex items-center gap-3 cursor-pointer" onclick="navigate('/')">
             <div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background: linear-gradient(135deg, #10B981, #059669);">
@@ -265,6 +264,30 @@
 
     function destroyCharts() { Object.values(chartInstances).forEach(c => c.destroy()); chartInstances = {}; _pollTimers.forEach(clearTimeout); _pollTimers = []; _audioObjectURLs.forEach(u => URL.revokeObjectURL(u)); _audioObjectURLs = []; }
     function app() { return document.getElementById('app'); }
+
+    // Global tooltip for .tip-cell elements
+    (function() {
+        const tip = document.getElementById('global-tip');
+        document.addEventListener('mouseover', e => {
+            const cell = e.target.closest('.tip-cell');
+            if (cell && cell.dataset.tip) {
+                tip.textContent = cell.dataset.tip;
+                const r = cell.getBoundingClientRect();
+                tip.style.display = 'block';
+                const tipRect = tip.getBoundingClientRect();
+                let top = r.top - tipRect.height - 8;
+                if (top < 4) top = r.bottom + 8;
+                let left = r.left;
+                if (left + tipRect.width > window.innerWidth - 8) left = window.innerWidth - tipRect.width - 8;
+                tip.style.top = top + 'px';
+                tip.style.left = left + 'px';
+            }
+        });
+        document.addEventListener('mouseout', e => {
+            const cell = e.target.closest('.tip-cell');
+            if (cell) tip.style.display = 'none';
+        });
+    })();
 
     function timeAgo(dateStr) {
         const d = new Date(dateStr);
@@ -1516,7 +1539,7 @@
             });
             const reasoning = esc(r.summary_reasoning || r.error || '\u2014');
             const reasoningDisplay = r.summary_reasoning ? esc(r.summary_reasoning) : (r.error ? '<span class=text-danger-500>' + esc(r.error) + '</span>' : '\u2014');
-            rowsHtml += '<tr><td class="text-sm">' + statusIcon + ' ' + esc(r.filename) + '</td>' + cellsHtml + '<td class="tip-cell text-xs text-slate-500"><span class="tip-text">' + reasoningDisplay + '</span>' + (reasoning && reasoning !== '\u2014' ? '<div class="tip-box">' + reasoning + '</div>' : '') + '</td></tr>';
+            rowsHtml += '<tr><td class="text-sm">' + statusIcon + ' ' + esc(r.filename) + '</td>' + cellsHtml + '<td class="tip-cell text-xs text-slate-500" data-tip="' + reasoning + '">' + reasoningDisplay + '</td></tr>';
         });
 
         let schemaHeaders = '';
@@ -1876,7 +1899,7 @@
             });
             const explanation = r.summary_reasoning || r.error || '\u2014';
             const explanationSafe = esc(explanation);
-            cells += `<td class="tip-cell text-xs text-slate-500"><span class="tip-text">${explanationSafe}</span>${explanation !== '\u2014' ? '<div class="tip-box">' + explanationSafe + '</div>' : ''}</td>`;
+            cells += `<td class="tip-cell text-xs text-slate-500" data-tip="${explanationSafe}">${explanationSafe}</td>`;
             tbody += `<tr>${cells}</tr>`;
         });
 
