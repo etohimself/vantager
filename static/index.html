@@ -2408,7 +2408,7 @@
             // ── TABULAR EXPLAINABILITY ──
             const fi = res.feature_importance || [];
             if (fi.length === 0 && res.summary) {
-                container.innerHTML = `<div class="card p-6 mb-6"><div class="prose text-sm text-slate-600">${esc(res.summary).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>')}</div></div>`;
+                container.innerHTML = `<div class="card p-6 mb-6"><div class="prose text-sm text-slate-600">${esc(res.summary).replace(/### ([^\n]+)/g, '<h5 class="font-semibold text-slate-600 mt-2 mb-1">$1</h5>').replace(/## ([^\n]+)/g, '<h4 class="font-bold text-slate-700 mt-3 mb-1">$1</h4>').replace(/# ([^\n]+)/g, '<h4 class="font-bold text-slate-700 mt-4 mb-1">$1</h4>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>')}</div></div>`;
                 if (btn) { btn.disabled = false; btn.textContent = 'Tekrar Analiz Et'; }
                 return;
             }
@@ -2651,7 +2651,7 @@
                     \u00d6zet Rapor
                 </h3>
                 <div class="text-sm text-slate-600 leading-relaxed">
-                    ${esc(res.summary || '').replace(/## ([^\n]+)/g, '<h4 class="font-bold text-slate-700 mt-3 mb-1">$1</h4>').replace(/### ([^\n]+)/g, '<h5 class="font-semibold text-slate-600 mt-2 mb-1">$1</h5>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>')}
+                    ${esc(res.summary || '').replace(/### ([^\n]+)/g, '<h5 class="font-semibold text-slate-600 mt-2 mb-1">$1</h5>').replace(/## ([^\n]+)/g, '<h4 class="font-bold text-slate-700 mt-3 mb-1">$1</h4>').replace(/# ([^\n]+)/g, '<h4 class="font-bold text-slate-700 mt-4 mb-1">$1</h4>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>')}
                 </div>
             </div>
         </div>`;
