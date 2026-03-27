@@ -23,4 +23,4 @@ else
 fi
 
 # ── Start application ──
-exec python3.11 server.py
+exec python3 server.py

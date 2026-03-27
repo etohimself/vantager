@@ -4,6 +4,7 @@ Tahmin Platformu: AutoGluon destekli tablo tabanlı tahmin uygulaması.
 Yerleşik http.server modülü kullanan backend sunucu.
 Kimlik doğrulama, yetkilendirme, model görünürlüğü ve onay sistemi içerir.
 """
+from __future__ import annotations
 
 import http.server
 import json

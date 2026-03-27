@@ -8,12 +8,12 @@
 torch>=2.4.0,<3.0
 
 # ── AutoGluon (ML engine) ──
-autogluon.tabular[all]>=1.2,<2.0
-autogluon.timeseries>=1.2,<2.0
+autogluon.tabular[all]>=1.1,<2.0
+autogluon.timeseries>=1.1,<2.0
 
 # ── AutoGluon MultiModal (optional, for advanced text/NLP) ──
 # Requires GPU for practical use. Comment out if CPU-only.
-autogluon.multimodal>=1.2,<2.0
+autogluon.multimodal>=1.1,<2.0
 
 # ── Speech-to-Text (Whisper) ──
 faster-whisper>=1.0.0,<2.0
