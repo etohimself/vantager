@@ -1956,14 +1956,15 @@
                     <thead><tr>
                         <th>Y\u00f6ntem</th>
                         <th>${model.task_type === 'timeseries' ? 'MASE' : 'Ba\u015far\u0131'}</th>
-                        <th>Do\u011frulama</th>
+                        <th>${model.task_type === 'regression' ? 'RMSE' : 'Do\u011frulama'}</th>
                         <th>Otomatik \u00c7al\u0131\u015ft\u0131rma</th>
                         <th class="text-right">Kullan</th>
                     </tr></thead>
                     <tbody>
                     ${submodels.map((sm, i) => {
                         const isTS = model.task_type === 'timeseries';
-                        const overfit = isTS ? 0 : ((sm.score_internal || 0) - sm.score);
+                        const isReg = model.task_type === 'regression';
+                        const overfit = (isTS || isReg) ? 0 : ((sm.score_internal || 0) - sm.score);
                         const ofFlag = overfit > 0.05 ? '<span class="tag tag-red text-xs ml-1" title="\u0130\u00e7 skor test skorundan \u00e7ok y\u00fcksek \u2014 a\u015f\u0131r\u0131 \u00f6\u011frenme olabilir">\u26a0</span>' : '';
                         const autoTag = sm.airflow_support.supported ? '<span class="tag tag-green">Destekleniyor</span>' : '<span class="tag tag-gray">Desteklenmiyor</span>';
                         return `
@@ -1978,7 +1979,7 @@
                                 <div class="${scoreColor(sm.score, model.task_type)} font-mono text-sm font-bold">${formatScore(sm.score, model.task_type)}</div>
                                 ${sm.ci_low != null ? '<div class="text-slate-400 font-mono" style="font-size:10px;">%' + ((sm.ci_low || 0) * 100).toFixed(0) + '\u2013' + ((sm.ci_high || 0) * 100).toFixed(0) + ' GA</div>' : ''}
                             </td>
-                            <td class="font-mono text-sm text-slate-500">${isTS ? (sm.score_internal || 0).toFixed(2) : '%' + ((sm.score_internal || 0) * 100).toFixed(1)}${ofFlag}</td>
+                            <td class="font-mono text-sm text-slate-500">${(isTS || model.task_type === 'regression') ? (sm.score_internal || 0).toFixed(2) : '%' + ((sm.score_internal || 0) * 100).toFixed(1)}${ofFlag}</td>
                             <td>${autoTag}</td>
                             <td class="text-right" onclick="event.stopPropagation()">
                                 <button class="btn-export btn-sm" onclick="navigate('/model/${escAttr(modelId)}/export/${encodeURIComponent(sm.name)}')">Kullan</button>
