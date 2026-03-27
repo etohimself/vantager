@@ -78,6 +78,9 @@
         .section-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #94A3B8; margin-bottom: 12px; }
         .stat-card { background: #fff; border: 1px solid #CBD5E1; border-radius: 14px; padding: 20px; }
         .featured-card { background: linear-gradient(135deg, #ECFDF5, #fff); border: 1px solid #6EE7B7; border-radius: 14px; padding: 20px; }
+        .custom-tooltip { position: relative; cursor: default; }
+        .custom-tooltip::after { content: attr(data-tip); position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); padding: 6px 12px; background: #1E293B; color: #fff; font-size: 12px; line-height: 1.4; border-radius: 8px; max-width: 400px; width: max-content; word-wrap: break-word; white-space: normal; pointer-events: none; opacity: 0; visibility: hidden; transition: opacity 0.1s; z-index: 50; margin-bottom: 4px; }
+        .custom-tooltip:hover::after { opacity: 1; visibility: visible; }
     </style>
 </head>
 <body class="min-h-screen">
@@ -1468,20 +1471,24 @@
         const schema = ca.schema || [];
         const isOwnerOrAdmin = model.owner === currentUser.username || isAdmin();
 
+        const hasActuals = Object.values(metrics).some(m => (m.n || 0) > 0);
+
         let metricsHtml = '';
-        for (const [varName, m] of Object.entries(metrics)) {
-            if (m.type === 'classification') {
-                metricsHtml += `<div class="stat-card">
-                    <div class="text-slate-500 text-xs font-medium mb-1">${esc(varName)} <span class="tag tag-green" style="font-size:10px;">Evet/Hay\u0131r</span></div>
-                    <div class="text-3xl font-bold ${m.accuracy >= 80 ? 'text-brand-600' : m.accuracy >= 60 ? 'text-warn-500' : 'text-danger-500'}">%${m.accuracy}</div>
-                    <div class="text-xs text-slate-400">${m.correct}/${m.n} do\u011fru</div>
-                </div>`;
-            } else {
-                metricsHtml += `<div class="stat-card">
-                    <div class="text-slate-500 text-xs font-medium mb-1">${esc(varName)} <span class="tag tag-orange" style="font-size:10px;">Puan</span></div>
-                    <div class="text-2xl font-bold text-slate-800">MAE: ${m.mae !== undefined ? m.mae : '\u2014'}</div>
-                    <div class="text-xs text-slate-400">RMSE: ${m.rmse !== undefined ? m.rmse : '\u2014'} \xb7 n=${m.n}</div>
-                </div>`;
+        if (hasActuals) {
+            for (const [varName, m] of Object.entries(metrics)) {
+                if (m.type === 'classification') {
+                    metricsHtml += `<div class="stat-card">
+                        <div class="text-slate-500 text-xs font-medium mb-1">${esc(varName)} <span class="tag tag-green" style="font-size:10px;">Evet/Hay\u0131r</span></div>
+                        <div class="text-3xl font-bold ${m.accuracy >= 80 ? 'text-brand-600' : m.accuracy >= 60 ? 'text-warn-500' : 'text-danger-500'}">%${m.accuracy}</div>
+                        <div class="text-xs text-slate-400">${m.correct}/${m.n} do\u011fru</div>
+                    </div>`;
+                } else {
+                    metricsHtml += `<div class="stat-card">
+                        <div class="text-slate-500 text-xs font-medium mb-1">${esc(varName)} <span class="tag tag-orange" style="font-size:10px;">Puan</span></div>
+                        <div class="text-2xl font-bold text-slate-800">MAE: ${m.mae !== undefined ? m.mae : '\u2014'}</div>
+                        <div class="text-xs text-slate-400">RMSE: ${m.rmse !== undefined ? m.rmse : '\u2014'} \xb7 n=${m.n}</div>
+                    </div>`;
+                }
             }
         }
 
@@ -1492,22 +1499,31 @@
             const statusIcon = r.error ? '\u274c' : '\u2705';
             let cellsHtml = '';
             schema.forEach(v => {
-                const actual = (r.actuals || {})[v.name] != null ? (r.actuals || {})[v.name] : '\u2014';
-                const pred = (r.predicted || {})[v.name] != null ? (r.predicted || {})[v.name] : '\u2014';
-                const match = v.type === 'classification' && actual != null && pred != null && actual !== '\u2014' && pred !== '\u2014'
-                    ? String(actual).toLowerCase().trim() === String(pred).toLowerCase().trim()
-                    : false;
-                cellsHtml += '<td class="text-xs font-mono">' + esc(actual) + '</td>';
-                cellsHtml += '<td class="text-xs font-mono ' + (match ? 'text-brand-600 font-bold' : '') + '">' + esc(pred) + '</td>';
+                if (hasActuals) {
+                    const actual = (r.actuals || {})[v.name] != null ? (r.actuals || {})[v.name] : '\u2014';
+                    const pred = (r.predicted || {})[v.name] != null ? (r.predicted || {})[v.name] : '\u2014';
+                    const match = v.type === 'classification' && actual != null && pred != null && actual !== '\u2014' && pred !== '\u2014'
+                        ? String(actual).toLowerCase().trim() === String(pred).toLowerCase().trim()
+                        : false;
+                    cellsHtml += '<td class="text-xs font-mono">' + esc(actual) + '</td>';
+                    cellsHtml += '<td class="text-xs font-mono ' + (match ? 'text-brand-600 font-bold' : '') + '">' + esc(pred) + '</td>';
+                } else {
+                    const pred = (r.predicted || {})[v.name] != null ? (r.predicted || {})[v.name] : '\u2014';
+                    cellsHtml += '<td class="text-xs font-mono">' + esc(pred) + '</td>';
+                }
             });
             const reasoning = esc(r.summary_reasoning || r.error || '\u2014');
             const reasoningDisplay = r.summary_reasoning ? esc(r.summary_reasoning) : (r.error ? '<span class=text-danger-500>' + esc(r.error) + '</span>' : '\u2014');
-            rowsHtml += '<tr><td class="text-sm">' + statusIcon + ' ' + esc(r.filename) + '</td>' + cellsHtml + '<td class="text-xs text-slate-500 max-w-xs truncate" title="' + reasoning + '">' + reasoningDisplay + '</td></tr>';
+            rowsHtml += '<tr><td class="text-sm">' + statusIcon + ' ' + esc(r.filename) + '</td>' + cellsHtml + '<td class="text-xs text-slate-500 max-w-xs truncate"><span class="custom-tooltip" data-tip="' + reasoning + '">' + reasoningDisplay + '</span></td></tr>';
         });
 
         let schemaHeaders = '';
         schema.forEach(v => {
-            schemaHeaders += '<th>' + esc(v.name) + ' (Ger\u00e7ek)</th><th>' + esc(v.name) + ' (Tahmin)</th>';
+            if (hasActuals) {
+                schemaHeaders += '<th>' + esc(v.name) + ' (Ger\u00e7ek)</th><th>' + esc(v.name) + ' (Tahmin)</th>';
+            } else {
+                schemaHeaders += '<th>' + esc(v.name) + ' (Tahmin)</th>';
+            }
         });
 
         const promptSafe = esc(ca.prompt || '');
@@ -1554,11 +1570,14 @@
                 </div>
             </div>
 
-            <div class="grid grid-cols-${metricCount} gap-4 mb-6">
+            ${hasActuals ? `<div class="grid grid-cols-${metricCount} gap-4 mb-6">
                 ${ca.overall_accuracy != null ? '<div class="featured-card" style="background: linear-gradient(135deg, #FAF5FF, #fff); border-color: #C4B5FD;"><div class="text-slate-500 text-xs font-medium mb-1">Genel Ba\u015far\u0131</div><div class="text-3xl font-bold '+(ca.overall_accuracy >= 80 ? 'text-brand-600' : ca.overall_accuracy >= 60 ? 'text-warn-500' : 'text-danger-500')+'">%'+ca.overall_accuracy+'</div></div>' : ''}
                 ${ca.overall_mae != null ? '<div class="featured-card" style="background: linear-gradient(135deg, #FFF7ED, #fff); border-color: #FED7AA;"><div class="text-slate-500 text-xs font-medium mb-1">Genel MAE</div><div class="text-3xl font-bold text-warn-600">'+ca.overall_mae+'</div></div>' : ''}
                 ${metricsHtml}
-            </div>
+            </div>` : `<div class="p-4 rounded-lg bg-blue-50 border border-blue-200 mb-6 flex items-center gap-3">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                <p class="text-sm text-blue-700">Bu analizde ger\u00e7ek de\u011ferler girilmedi\u011fi i\u00e7in do\u011fruluk kar\u015f\u0131la\u015ft\u0131rmas\u0131 yap\u0131lamad\u0131. Sadece LLM tahminleri g\u00f6sterilmektedir.</p>
+            </div>`}
 
             <div class="card p-5 mb-6">
                 <h3 class="font-semibold text-slate-800 mb-2 text-sm">Kullan\u0131lan Talimat</h3>
@@ -1855,7 +1874,7 @@
             });
             const explanation = r.summary_reasoning || r.error || '\u2014';
             const explanationSafe = esc(explanation);
-            cells += `<td class="text-xs text-slate-500 max-w-xs truncate" title="${explanationSafe}">${explanationSafe}</td>`;
+            cells += `<td class="text-xs text-slate-500 max-w-xs truncate"><span class="custom-tooltip" data-tip="${explanationSafe}">${explanationSafe}</span></td>`;
             tbody += `<tr>${cells}</tr>`;
         });
 
@@ -2472,34 +2491,56 @@
     function renderCallAnalysisExplain(container, res) {
         const vars = res.variable_analysis || {};
         const samples = res.reasoning_samples || [];
+        const hasActuals = Object.values(vars).some(va => (va.n || 0) > 0);
 
         let varsHtml = '';
         for (const [vn, va] of Object.entries(vars)) {
             const safeVn = esc(vn);
-            if (va.type === 'classification') {
-                const acc = va.accuracy || 0;
-                const accColor = acc >= 80 ? 'text-brand-600' : acc >= 60 ? 'text-warn-500' : 'text-danger-500';
-                varsHtml += `<div class="card p-5 mb-4">
-                    <h4 class="font-semibold text-slate-800 text-sm mb-3">${safeVn} <span class="tag tag-green text-xs">Evet/Hay\u0131r</span></h4>
-                    <div class="text-2xl font-bold ${accColor} mb-2">%${acc}</div>
-                    <div class="text-xs text-slate-400 mb-3">${va.correct || 0}/${va.n || 0} do\u011fru tahmin</div>`;
-                if (va.per_class_accuracy) {
-                    varsHtml += '<div class="space-y-1.5">';
-                    for (const [cls, clsAcc] of Object.entries(va.per_class_accuracy)) {
-                        const safeCls = esc(cls);
-                        const pct = Math.round(clsAcc);
-                        const barCol = pct >= 80 ? '#10B981' : pct >= 60 ? '#F59E0B' : '#EF4444';
-                        varsHtml += `<div class="flex items-center gap-3"><span class="text-xs w-32 truncate text-slate-600">${safeCls}</span><div class="flex-1 h-4 rounded overflow-hidden bg-slate-100"><div class="h-full rounded" style="width:${pct}%;background:${barCol};min-width:2px;"></div></div><span class="text-xs font-mono w-10 text-right text-slate-500">%${pct}</span></div>`;
+            if (hasActuals) {
+                if (va.type === 'classification') {
+                    const acc = va.accuracy || 0;
+                    const accColor = acc >= 80 ? 'text-brand-600' : acc >= 60 ? 'text-warn-500' : 'text-danger-500';
+                    varsHtml += `<div class="card p-5 mb-4">
+                        <h4 class="font-semibold text-slate-800 text-sm mb-3">${safeVn} <span class="tag tag-green text-xs">Evet/Hay\u0131r</span></h4>
+                        <div class="text-2xl font-bold ${accColor} mb-2">%${acc}</div>
+                        <div class="text-xs text-slate-400 mb-3">${va.correct || 0}/${va.n || 0} do\u011fru tahmin</div>`;
+                    if (va.per_class_accuracy) {
+                        varsHtml += '<div class="space-y-1.5">';
+                        for (const [cls, clsAcc] of Object.entries(va.per_class_accuracy)) {
+                            const safeCls = esc(cls);
+                            const pct = Math.round(clsAcc);
+                            const barCol = pct >= 80 ? '#10B981' : pct >= 60 ? '#F59E0B' : '#EF4444';
+                            varsHtml += `<div class="flex items-center gap-3"><span class="text-xs w-32 truncate text-slate-600">${safeCls}</span><div class="flex-1 h-4 rounded overflow-hidden bg-slate-100"><div class="h-full rounded" style="width:${pct}%;background:${barCol};min-width:2px;"></div></div><span class="text-xs font-mono w-10 text-right text-slate-500">%${pct}</span></div>`;
+                        }
+                        varsHtml += '</div>';
                     }
                     varsHtml += '</div>';
+                } else if (va.type === 'regression') {
+                    varsHtml += `<div class="card p-5 mb-4">
+                        <h4 class="font-semibold text-slate-800 text-sm mb-3">${safeVn} <span class="tag tag-orange text-xs">Puan</span></h4>
+                        <div class="text-xl font-bold text-slate-800 mb-1">MAE: ${va.mae != null ? va.mae : '\u2014'}</div>
+                        <div class="text-xs text-slate-400">RMSE: ${va.rmse != null ? va.rmse : '\u2014'} \u00b7 n=${va.n || 0}</div>
+                    </div>`;
                 }
-                varsHtml += '</div>';
-            } else if (va.type === 'regression') {
-                varsHtml += `<div class="card p-5 mb-4">
-                    <h4 class="font-semibold text-slate-800 text-sm mb-3">${safeVn} <span class="tag tag-orange text-xs">Puan</span></h4>
-                    <div class="text-xl font-bold text-slate-800 mb-1">MAE: ${va.mae != null ? va.mae : '\u2014'}</div>
-                    <div class="text-xs text-slate-400">RMSE: ${va.rmse != null ? va.rmse : '\u2014'} \u00b7 n=${va.n || 0}</div>
-                </div>`;
+            } else {
+                const predDist = va.predicted_distribution || {};
+                const distEntries = Object.entries(predDist);
+                if (va.type === 'classification' && distEntries.length > 0) {
+                    const total = distEntries.reduce((s, e) => s + e[1], 0);
+                    varsHtml += `<div class="card p-5 mb-4">
+                        <h4 class="font-semibold text-slate-800 text-sm mb-3">${safeVn} <span class="tag tag-blue text-xs">Tahmin Da\u011f\u0131l\u0131m\u0131</span></h4>
+                        <div class="space-y-1.5">`;
+                    distEntries.forEach(([cls, cnt]) => {
+                        const pct = total > 0 ? Math.round(cnt / total * 100) : 0;
+                        varsHtml += `<div class="flex items-center gap-3"><span class="text-xs w-32 truncate text-slate-600">${esc(cls)}</span><div class="flex-1 h-4 rounded overflow-hidden bg-slate-100"><div class="h-full rounded" style="width:${pct}%;background:linear-gradient(90deg,#3B82F6,#60A5FA);min-width:2px;"></div></div><span class="text-xs font-mono w-16 text-right text-slate-500">${cnt} (%${pct})</span></div>`;
+                    });
+                    varsHtml += '</div></div>';
+                } else if (va.type === 'regression') {
+                    varsHtml += `<div class="card p-5 mb-4">
+                        <h4 class="font-semibold text-slate-800 text-sm mb-3">${safeVn} <span class="tag tag-orange text-xs">Puan</span></h4>
+                        <div class="text-xs text-slate-400">Tahmin verildi, kar\u015f\u0131la\u015ft\u0131rma i\u00e7in ger\u00e7ek de\u011ferler gerekli.</div>
+                    </div>`;
+                }
             }
         }
 

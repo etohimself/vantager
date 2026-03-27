@@ -6599,57 +6599,58 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                     "method": "LLM Çağrı Analizi Özeti",
                 }
 
-                # Per-variable analysis
+                from collections import Counter
+
                 var_analysis = {}
                 for var in schema:
                     vn = var["name"]
                     vtype = var.get("type", "classification")
                     actuals = []
                     predictions = []
+                    all_predictions = []
                     for r in row_results:
                         if r.get("error"):
                             continue
-                        actual = (r.get("actuals") or {}).get(vn)
                         pred = (r.get("predicted") or {}).get(vn)
+                        if pred is not None:
+                            all_predictions.append(pred)
+                        actual = (r.get("actuals") or {}).get(vn)
                         if actual is not None and pred is not None:
                             actuals.append(actual)
                             predictions.append(pred)
 
                     va = {"name": vn, "type": vtype, "n": len(actuals)}
 
-                    if vtype == "classification" and actuals:
-                        correct = sum(1 for a, p in zip(actuals, predictions)
-                                      if a is not None and p is not None
-                                      and str(a).lower().strip() == str(p).lower().strip())
-                        va["accuracy"] = round(correct / len(actuals) * 100, 1) if actuals else 0
-                        va["correct"] = correct
-
-                        # Class distribution
-                        from collections import Counter
-                        actual_dist = dict(Counter(str(a).strip() for a in actuals))
-                        pred_dist = dict(Counter(str(p).strip() for p in predictions))
-                        va["actual_distribution"] = actual_dist
+                    if vtype == "classification":
+                        pred_dist = dict(Counter(str(p).strip() for p in all_predictions))
                         va["predicted_distribution"] = pred_dist
+                        if actuals:
+                            correct = sum(1 for a, p in zip(actuals, predictions)
+                                          if a is not None and p is not None
+                                          and str(a).lower().strip() == str(p).lower().strip())
+                            va["accuracy"] = round(correct / len(actuals) * 100, 1) if actuals else 0
+                            va["correct"] = correct
+                            actual_dist = dict(Counter(str(a).strip() for a in actuals))
+                            va["actual_distribution"] = actual_dist
+                            class_acc = {}
+                            for cls in actual_dist:
+                                cls_total = sum(1 for a in actuals if str(a).strip() == cls)
+                                cls_correct = sum(1 for a, p in zip(actuals, predictions)
+                                                  if str(a).strip() == cls and str(p).lower().strip() == cls.lower())
+                                if cls_total > 0:
+                                    class_acc[cls] = round(cls_correct / cls_total * 100, 1)
+                            va["per_class_accuracy"] = class_acc
 
-                        # Per-class accuracy
-                        class_acc = {}
-                        for cls in actual_dist:
-                            cls_total = sum(1 for a in actuals if str(a).strip() == cls)
-                            cls_correct = sum(1 for a, p in zip(actuals, predictions)
-                                              if str(a).strip() == cls and str(p).lower().strip() == cls.lower())
-                            if cls_total > 0:
-                                class_acc[cls] = round(cls_correct / cls_total * 100, 1)
-                        va["per_class_accuracy"] = class_acc
-
-                    elif vtype == "regression" and actuals:
-                        try:
-                            actual_floats = [float(a) for a in actuals]
-                            pred_floats = [float(p) for p in predictions]
-                            errors = [abs(a - p) for a, p in zip(actual_floats, pred_floats)]
-                            va["mae"] = round(sum(errors) / len(errors), 4)
-                            va["rmse"] = round((sum(e ** 2 for e in errors) / len(errors)) ** 0.5, 4)
-                        except (ValueError, TypeError):
-                            pass
+                    elif vtype == "regression":
+                        if actuals:
+                            try:
+                                actual_floats = [float(a) for a in actuals]
+                                pred_floats = [float(p) for p in predictions]
+                                errors = [abs(a - p) for a, p in zip(actual_floats, pred_floats)]
+                                va["mae"] = round(sum(errors) / len(errors), 4)
+                                va["rmse"] = round((sum(e ** 2 for e in errors) / len(errors)) ** 0.5, 4)
+                            except (ValueError, TypeError):
+                                pass
 
                     var_analysis[vn] = va
 
@@ -6671,38 +6672,84 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                     if r.get("summary_reasoning") and not r.get("error")
                 ]
 
-                # Summary text
+                has_any_actuals = any(va["n"] > 0 for va in var_analysis.values())
+
                 summary_lines = [
-                    f"## Çağrı Analizi Açıklanabilirlik Raporu",
-                    f"**{len(row_results)}** ses dosyası analiz edildi, **{error_count}** hata oluştu.",
+                    f"## \u00c7a\u011fr\u0131 Analizi A\u00e7\u0131klanabilirlik Raporu",
+                    f"**{len(row_results)}** ses dosyas\u0131 analiz edildi, **{error_count}** hata olu\u015ftu.",
                     "",
                 ]
 
-                for vn, va in var_analysis.items():
-                    if va["type"] == "classification":
-                        acc = va.get("accuracy", 0)
-                        acc_label = ("Çok iyi" if acc >= 80 else "İyi" if acc >= 60
-                                     else "Orta" if acc >= 40 else "Düşük")
-                        summary_lines.append(
-                            f"### {vn} (Sınıflandırma)\n"
-                            f"Doğruluk: **%{acc}** ({va.get('correct', 0)}/{va['n']}) — {acc_label}"
-                        )
-                        if va.get("per_class_accuracy"):
-                            for cls, cls_acc in va["per_class_accuracy"].items():
-                                summary_lines.append(f"  - {cls}: %{cls_acc}")
-                    elif va["type"] == "regression":
-                        mae = va.get("mae")
-                        if mae is not None:
+                if has_any_actuals:
+                    for vn, va in var_analysis.items():
+                        if va["type"] == "classification" and va["n"] > 0:
+                            acc = va.get("accuracy", 0)
+                            acc_label = ("\u00c7ok iyi" if acc >= 80 else "\u0130yi" if acc >= 60
+                                         else "Orta" if acc >= 40 else "D\u00fc\u015f\u00fck")
                             summary_lines.append(
-                                f"### {vn} (Sayısal)\n"
-                                f"Ortalama Hata (MAE): **{mae}** · RMSE: {va.get('rmse', '?')}"
+                                f"### {vn} (S\u0131n\u0131fland\u0131rma)\n"
+                                f"Do\u011fruluk: **%{acc}** ({va.get('correct', 0)}/{va['n']}) \u2014 {acc_label}"
                             )
-
-                if reasoning_texts:
+                            if va.get("per_class_accuracy"):
+                                for cls, cls_acc in va["per_class_accuracy"].items():
+                                    summary_lines.append(f"  - {cls}: %{cls_acc}")
+                            agree_count = va.get("correct", 0)
+                            disagree_count = va["n"] - agree_count
+                            if disagree_count > 0:
+                                summary_lines.append(
+                                    f"LLM **{agree_count}** dosyada ger\u00e7ek de\u011ferle ayn\u0131 fikirde, **{disagree_count}** dosyada farkl\u0131 de\u011ferlendirme yapt\u0131."
+                                )
+                        elif va["type"] == "regression" and va["n"] > 0:
+                            mae = va.get("mae")
+                            if mae is not None:
+                                summary_lines.append(
+                                    f"### {vn} (Say\u0131sal)\n"
+                                    f"Ortalama Hata (MAE): **{mae}** \u00b7 RMSE: {va.get('rmse', '?')}"
+                                )
+                    clf_vars = [va for va in var_analysis.values() if va["type"] == "classification" and va["n"] > 0]
+                    if clf_vars:
+                        avg_acc = sum(va.get("accuracy", 0) for va in clf_vars) / len(clf_vars)
+                        if avg_acc >= 80:
+                            summary_lines.append(f"\n### Talimat Etkinli\u011fi\nOrtalama do\u011fruluk **%{round(avg_acc, 1)}** \u2014 talimat LLM\u2019i ba\u015far\u0131l\u0131 y\u00f6nlendiriyor.")
+                        elif avg_acc >= 60:
+                            summary_lines.append(f"\n### Talimat Etkinli\u011fi\nOrtalama do\u011fruluk **%{round(avg_acc, 1)}** \u2014 talimat k\u0131smen etkili, iyile\u015ftirme yap\u0131labilir.")
+                        else:
+                            summary_lines.append(f"\n### Talimat Etkinli\u011fi\nOrtalama do\u011fruluk **%{round(avg_acc, 1)}** \u2014 talimat\u0131n g\u00f6zden ge\u00e7irilmesi \u00f6nerilir.")
+                else:
+                    summary_lines.append("### LLM Tahmin Da\u011f\u0131l\u0131m\u0131")
+                    for vn, va in var_analysis.items():
+                        pred_dist = va.get("predicted_distribution", {})
+                        if va["type"] == "classification" and pred_dist:
+                            dist_parts = ", ".join(
+                                f"**{cnt}** dosyada '**{cls}**'" for cls, cnt in pred_dist.items()
+                            )
+                            summary_lines.append(f"  - **{vn}**: {dist_parts}")
+                        elif va["type"] == "regression":
+                            summary_lines.append(f"  - **{vn}**: say\u0131sal tahminler \u00fcretildi")
+                    summary_lines.append("")
+                    if reasoning_texts:
+                        common_words = Counter()
+                        for rt in reasoning_texts:
+                            for word in rt.lower().split():
+                                if len(word) > 4:
+                                    common_words[word] += 1
+                        top_themes = [w for w, _ in common_words.most_common(5)]
+                        if top_themes:
+                            summary_lines.append(
+                                f"### LLM Odak Noktalar\u0131\n"
+                                f"LLM gerek\u00e7elerinde s\u0131k ge\u00e7en temalar: {', '.join(top_themes)}"
+                            )
                     summary_lines.append(
-                        f"\n### LLM Gerekçeleri\n"
-                        f"LLM, {len(reasoning_texts)} dosya için açıklama üretti. "
-                        f"Aşağıda örnek gerekçeler görüntülenebilir."
+                        f"\n### \u00d6neri\n"
+                        f"Bu analizde ger\u00e7ek de\u011ferler girilmedi\u011fi i\u00e7in do\u011fruluk \u00f6l\u00e7\u00fcm\u00fc yap\u0131lamad\u0131. "
+                        f"Ger\u00e7ek de\u011ferleri girerek LLM\u2019in do\u011frulu\u011funu \u00f6l\u00e7ebilirsiniz."
+                    )
+
+                if has_any_actuals and reasoning_texts:
+                    summary_lines.append(
+                        f"\n### LLM Gerek\u00e7eleri\n"
+                        f"LLM, {len(reasoning_texts)} dosya i\u00e7in a\u00e7\u0131klama \u00fcretti. "
+                        f"A\u015fa\u011f\u0131da \u00f6rnek gerek\u00e7eler g\u00f6r\u00fcnt\u00fclenebilir."
                     )
 
                 result["summary"] = "\n".join(summary_lines)
