@@ -4,6 +4,13 @@
 
 set -e
 
+# Load .env file if present
+if [ -f "$(dirname "$0")/.env" ]; then
+    set -a
+    . "$(dirname "$0")/.env"
+    set +a
+fi
+
 # Create data directories
 DATA="${DATA_DIR:-./data}"
 mkdir -p "${DATA}"/{models,temp,stt,llm,cache/huggingface,cache/sentence_transformers}
