@@ -3676,7 +3676,7 @@ _WHISPER_IDLE_TIMEOUT = int(os.environ.get("WHISPER_IDLE_TIMEOUT", "300"))  # 5 
 def _get_whisper_model():
     """Lazy-load and cache the Whisper model. Downloads to ./stt/ if missing.
     Registers resource reservation with ResourceManager."""
-    global _whisper_model, _whisper_last_used
+    global _whisper_model, _whisper_last_used, _whisper_measured_vram_mb
     if _whisper_model is None:
         with _whisper_model_lock:
             if _whisper_model is None:
