@@ -1913,7 +1913,7 @@ _training_pool = ThreadPoolExecutor(max_workers=1)
 class FairJobQueue:
     """Fair job queue with position tracking. Round-robin across users."""
     def __init__(self, pool, job_store):
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._queue = []  # [(username, job_id, submit_time, callable, args, kwargs)]
         self._pool = pool
         self._job_store = job_store
@@ -5253,7 +5253,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                 # Count total rows for limit check
                 try:
                     with open(str(csv_path), 'r', encoding='utf-8', errors='replace') as f:
-                        total_rows = sum(1 for _ in f) - 1  # subtract header
+                        total_rows = max(0, sum(1 for _ in f) - 1)  # subtract header
                 except Exception:
                     total_rows = 0
                 if total_rows > MAX_BATCH_ROWS:
@@ -6366,7 +6366,7 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                     for lag in range(2, len(acf_values)):
                         if acf_values[lag] > acf_conf:
                             # Check if it's a local peak
-                            prev_ok = lag == 1 or acf_values[lag] > acf_values[lag - 1]
+                            prev_ok = lag == 2 or acf_values[lag] > acf_values[lag - 1]
                             next_ok = lag == len(acf_values) - 1 or acf_values[lag] >= acf_values[lag + 1]
                             if prev_ok and next_ok and acf_values[lag] > 0.2:
                                 seasonal_period = lag

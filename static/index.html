@@ -290,6 +290,7 @@
                 if (top < 4) top = r.bottom + 8;
                 let left = r.left;
                 if (left + tipRect.width > window.innerWidth - 8) left = window.innerWidth - tipRect.width - 8;
+                if (left < 8) left = 8;
                 tip.style.top = top + 'px';
                 tip.style.left = left + 'px';
             }
@@ -1606,7 +1607,7 @@
                 </div>
             </div>
 
-            ${hasActuals ? `<div class="grid grid-cols-${metricCount} gap-4 mb-6">
+            ${hasActuals ? `<div class="grid gap-4 mb-6" style="grid-template-columns: repeat(${metricCount}, 1fr);">
                 ${ca.overall_accuracy != null ? '<div class="featured-card" style="background: linear-gradient(135deg, #FAF5FF, #fff); border-color: #C4B5FD;"><div class="text-slate-500 text-xs font-medium mb-1">Genel Ba\u015far\u0131</div><div class="text-3xl font-bold '+(ca.overall_accuracy >= 80 ? 'text-brand-600' : ca.overall_accuracy >= 60 ? 'text-warn-500' : 'text-danger-500')+'">%'+ca.overall_accuracy+'</div></div>' : ''}
                 ${ca.overall_mae != null ? '<div class="featured-card" style="background: linear-gradient(135deg, #FFF7ED, #fff); border-color: #FED7AA;"><div class="text-slate-500 text-xs font-medium mb-1">Genel MAE</div><div class="text-3xl font-bold text-warn-600">'+ca.overall_mae+'</div></div>' : ''}
                 ${metricsHtml}
@@ -2954,7 +2955,7 @@
     }
 
     async function downloadExport(type, modelId, submodelName) {
-        const url = `/api/models/${modelId}/export/${encodeURIComponent(submodelName)}/${type}`;
+        const url = API + `/api/models/${modelId}/export/${encodeURIComponent(submodelName)}/${type}`;
         try {
             const res = await fetch(url, { headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {} });
             if (res.ok) {
@@ -2976,7 +2977,7 @@
     }
 
     async function downloadCallAnalysisCSV(modelId) {
-        const url = `/api/models/${modelId}/call-analysis/download-csv`;
+        const url = API + `/api/models/${modelId}/call-analysis/download-csv`;
         try {
             const res = await fetch(url, { headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {} });
             if (res.ok) {
