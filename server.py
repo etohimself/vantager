@@ -3401,7 +3401,7 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
 
             save_model_meta(model_id, meta)
             add_activity("trained", model_id, model_name,
-                         f"Zaman serisi: {len(submodels)} alt model, tahmin uzunluğu: {prediction_length}",
+                         f"bir zaman serisi modeli eğitti.",
                          username=username)
 
             # Cache the freshly trained model so predictions are instant
@@ -3609,10 +3609,9 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
 
         save_model_meta(model_id, meta)
 
-        activity_msg = f"{len(submodels)} alt model ile eğitildi, en iyi: {meta['best_model']}"
-        if text_columns:
-            activity_msg += f" (metin embedding: {len(text_columns)} sütun)"
-        add_activity("trained", model_id, model_name, activity_msg, username=username)
+        add_activity("trained", model_id, model_name,
+                     f"bir tahmin modeli eğitti.",
+                     username=username)
 
         # Cache the freshly trained model so predictions are instant
         model_cache.put(model_id, predictor, task_type)
@@ -4145,9 +4144,7 @@ def audio_evaluate_pipeline(job_id: str, model_id: str, model_name: str,
 
         save_model_meta(model_id, meta)
         add_activity("audio_evaluated", model_id, model_name,
-                     f"{len(audio_files)} ses dosyası değerlendirildi, "
-                     f"{'Doğruluk: %' + str(overall_accuracy) if overall_accuracy is not None else ''}"
-                     f"{'MAE: ' + str(overall_mae) if overall_mae is not None else ''}",
+                     f"{len(audio_files)} adet çağrı analiz etti.",
                      username=username)
 
         # Check if ALL files failed
@@ -5116,7 +5113,9 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             "endorsed": endorsed,
             "my_models": my_models[:5],
             "best_model": best_model,
-            "activity": activity[:10],
+            "activity": [a for a in activity if a.get("action") not in
+                        ("started_training", "started_audio_eval", "started_audio_predict",
+                         "explained", "registration_detail")][:10],
             "user": {
                 "username": user["username"],
                 "display_name": user.get("display_name", user["username"]),

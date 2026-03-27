@@ -626,10 +626,10 @@
                     <div class="card-flat p-4 space-y-3 max-h-96 overflow-y-auto">
                         ${data.activity && data.activity.length ? data.activity.map(a => `
                             <div class="flex items-start gap-3">
-                                <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-slate-100 text-sm">${a.action === 'trained' ? '\ud83c\udfaf' : a.action === 'predicted' ? '\u26a1' : a.action === 'endorsed' ? '\u2b50' : '\ud83d\udccc'}</div>
+                                <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-slate-100 text-sm">${a.action === 'trained' ? '\ud83c\udfaf' : a.action === 'audio_evaluated' ? '\ud83c\udfa4' : a.action === 'predicted' || a.action === 'batch_predicted' ? '\u26a1' : a.action === 'audio_predicted' ? '\ud83d\udce2' : a.action === 'endorsed' ? '\u2b50' : a.action === 'deleted' ? '\ud83d\uddd1' : '\ud83d\udccc'}</div>
                                 <div class="flex-1 min-w-0">
-                                    <div class="text-sm text-slate-700">${esc(a.details || a.action)}</div>
-                                    <div class="text-slate-400 text-xs mt-0.5">${esc(a.username || '')} \u00b7 ${timeAgo(a.timestamp)}</div>
+                                    <div class="text-sm text-slate-700"><strong>${esc(a.username || '')}</strong> ${esc(a.details || a.action)}</div>
+                                    <div class="text-slate-400 text-xs mt-0.5">${timeAgo(a.timestamp)}</div>
                                 </div>
                             </div>
                         `).join('') : '<div class="text-slate-400 text-sm text-center py-4">Hen\u00fcz aktivite yok</div>'}
