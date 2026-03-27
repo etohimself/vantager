@@ -78,9 +78,10 @@
         .section-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #94A3B8; margin-bottom: 12px; }
         .stat-card { background: #fff; border: 1px solid #CBD5E1; border-radius: 14px; padding: 20px; }
         .featured-card { background: linear-gradient(135deg, #ECFDF5, #fff); border: 1px solid #6EE7B7; border-radius: 14px; padding: 20px; }
-        .custom-tooltip { position: relative; cursor: default; }
-        .custom-tooltip::after { content: attr(data-tip); position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); padding: 6px 12px; background: #1E293B; color: #fff; font-size: 12px; line-height: 1.4; border-radius: 8px; max-width: 400px; width: max-content; word-wrap: break-word; white-space: normal; pointer-events: none; opacity: 0; visibility: hidden; transition: opacity 0.1s; z-index: 50; margin-bottom: 4px; }
-        .custom-tooltip:hover::after { opacity: 1; visibility: visible; }
+        .tip-cell { position: relative; max-width: 280px; overflow: visible !important; }
+        .tip-cell .tip-text { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default; }
+        .tip-cell .tip-box { display: none; position: absolute; bottom: calc(100% + 6px); left: 0; padding: 8px 14px; background: #1E293B; color: #fff; font-size: 12px; line-height: 1.5; border-radius: 8px; max-width: 400px; width: max-content; word-wrap: break-word; white-space: normal; z-index: 9999; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+        .tip-cell:hover .tip-box { display: block; }
     </style>
 </head>
 <body class="min-h-screen">
@@ -1515,7 +1516,7 @@
             });
             const reasoning = esc(r.summary_reasoning || r.error || '\u2014');
             const reasoningDisplay = r.summary_reasoning ? esc(r.summary_reasoning) : (r.error ? '<span class=text-danger-500>' + esc(r.error) + '</span>' : '\u2014');
-            rowsHtml += '<tr><td class="text-sm">' + statusIcon + ' ' + esc(r.filename) + '</td>' + cellsHtml + '<td class="text-xs text-slate-500 max-w-xs truncate"><span class="custom-tooltip" data-tip="' + reasoning + '">' + reasoningDisplay + '</span></td></tr>';
+            rowsHtml += '<tr><td class="text-sm">' + statusIcon + ' ' + esc(r.filename) + '</td>' + cellsHtml + '<td class="tip-cell text-xs text-slate-500"><span class="tip-text">' + reasoningDisplay + '</span>' + (reasoning && reasoning !== '\u2014' ? '<div class="tip-box">' + reasoning + '</div>' : '') + '</td></tr>';
         });
 
         let schemaHeaders = '';
@@ -1875,7 +1876,7 @@
             });
             const explanation = r.summary_reasoning || r.error || '\u2014';
             const explanationSafe = esc(explanation);
-            cells += `<td class="text-xs text-slate-500 max-w-xs truncate"><span class="custom-tooltip" data-tip="${explanationSafe}">${explanationSafe}</span></td>`;
+            cells += `<td class="tip-cell text-xs text-slate-500"><span class="tip-text">${explanationSafe}</span>${explanation !== '\u2014' ? '<div class="tip-box">' + explanationSafe + '</div>' : ''}</td>`;
             tbody += `<tr>${cells}</tr>`;
         });
 
