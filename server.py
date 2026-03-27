@@ -260,6 +260,7 @@ def clean_prediction_input(features_dict, column_types):
 os.environ["AG_AUTOMM_NUM_WORKERS"] = "0"
 os.environ["AG_AUTOMM_NUM_WORKERS_EVALUATION"] = "0"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ.setdefault("RAY_USE_MULTIPROCESSING_CPU_COUNT", "1")  # Fix Ray CPU detection in containers
 
 # ── AutoGluon imports ──────────────────────────────────────────────
 try:
