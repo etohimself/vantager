@@ -1835,7 +1835,7 @@ def _download_llama_server():
             # Validate tar members to prevent path traversal
             for member in tf.getmembers():
                 member_path = os.path.normpath(os.path.join(str(extract_dir), member.name))
-                if not member_path.startswith(str(extract_dir)):
+                if not member_path.startswith(str(extract_dir) + os.sep):
                     raise ValueError(f"Tar member '{member.name}' would extract outside target directory")
             tf.extractall(str(extract_dir))
     else:
@@ -1843,7 +1843,7 @@ def _download_llama_server():
             # Validate zip members to prevent path traversal
             for member in zf.namelist():
                 member_path = os.path.normpath(os.path.join(str(extract_dir), member))
-                if not member_path.startswith(str(extract_dir)):
+                if not member_path.startswith(str(extract_dir) + os.sep):
                     raise ValueError(f"Zip member '{member}' would extract outside target directory")
             zf.extractall(str(extract_dir))
     archive_path.unlink(missing_ok=True)
@@ -4933,7 +4933,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         # Resolve the path and verify it stays within STATIC_DIR to prevent traversal
         try:
             file_path = (STATIC_DIR / path.lstrip("/")).resolve()
-            if file_path.is_file() and str(file_path).startswith(str(STATIC_DIR.resolve())):
+            if file_path.is_file() and str(file_path).startswith(str(STATIC_DIR.resolve()) + os.sep):
                 return super().do_GET()
         except (OSError, ValueError):
             pass
@@ -6564,7 +6564,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                     sql = _text_sql_note + sql
                 add_activity("exported_mssql", model_id, meta["name"],
                             f"{submodel_name} için SQL dışa aktarıldı", username=user["username"])
-                filename = f"tahmin_{model_id[:8]}_{submodel_name.replace(' ', '_').lower()}.sql"
+                safe_sub = re.sub(r'[^a-zA-Z0-9._-]', '_', submodel_name).lower()
+                filename = f"tahmin_{model_id[:8]}_{safe_sub}.sql"
                 return self.send_file_download(sql, filename, "application/sql")
 
             return self.send_json({
