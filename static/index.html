@@ -109,8 +109,8 @@
     // Two-layer escaping: JS string escape first, then HTML entity encode for attribute safety.
     function escAttr(str) {
         if (str === null || str === undefined) return '';
-        // Step 1: JS string escape (handles \, ', newlines)
-        var s = String(str).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n').replace(/\r/g,'\\r');
+        // Step 1: JS string escape (handles \, ', backticks, newlines)
+        var s = String(str).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/`/g,'\\`').replace(/\$/g,'\\$').replace(/\n/g,'\\n').replace(/\r/g,'\\r');
         // Step 2: HTML entity encode for safe embedding in HTML attributes
         return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
@@ -141,14 +141,14 @@
     let currentRoute = '/';
     let chartInstances = {};
     let currentUser = null;
-    let authToken = localStorage.getItem('authToken') || null;
+    let authToken = null;  // kept for session-alive tracking only; actual auth via HttpOnly cookie
     let _pollTimers = [];
     let _audioObjectURLs = [];
 
     async function api(path, opts = {}) {
         const headers = opts.headers || {};
-        if (authToken) headers['Authorization'] = 'Bearer ' + authToken;
         opts.headers = headers;
+        opts.credentials = 'same-origin';  // send HttpOnly session cookie
         let res;
         try {
             res = await fetch(API + path, opts);
@@ -158,7 +158,6 @@
         if (res.status === 401 && path !== '/api/auth/me' && path !== '/api/auth/login') {
             currentUser = null;
             authToken = null;
-            localStorage.removeItem('authToken');
             renderLogin();
             return { error: 'Oturum süreniz doldu, lütfen tekrar giriş yapın.' };
         }
@@ -171,15 +170,15 @@
     }
 
     async function checkAuth() {
-        if (!authToken) return false;
+        // With HttpOnly cookies, we can't check client-side — ask the server
         const res = await api('/api/auth/me');
         if (res.authenticated) {
+            authToken = true;  // flag that we have a session
             currentUser = res.user;
             return true;
         }
         currentUser = null;
         authToken = null;
-        localStorage.removeItem('authToken');
         return false;
     }
 
@@ -313,6 +312,7 @@
     }
 
     function scoreColor(score, taskType) {
+        if (score == null || score === undefined) return 'text-slate-400';
         // For timeseries (MASE): lower is better
         if (taskType === 'timeseries') {
             if (score <= 0.5) return 'text-brand-600';   // excellent
@@ -328,6 +328,7 @@
     }
 
     function formatScore(score, taskType) {
+        if (score == null || score === undefined) return 'N/A';
         if (taskType === 'timeseries') {
             return score.toFixed(2);   // raw MASE value like "0.42"
         }
@@ -360,7 +361,6 @@
         await api('/api/auth/logout', { method: 'POST' });
         currentUser = null;
         authToken = null;
-        localStorage.removeItem('authToken');
         document.getElementById('main-nav').classList.add('hidden');
         renderLogin();
     }
@@ -419,13 +419,13 @@
             const res = await fetch(API + '/api/auth/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
                 body: JSON.stringify({ username, password }),
             });
             const data = await res.json();
 
             if (data.success) {
-                authToken = data.token;
-                localStorage.setItem('authToken', authToken);
+                authToken = true;  // session cookie is set by server (HttpOnly)
                 currentUser = data.user;
                 showNav();
                 navigate('/');
@@ -771,6 +771,9 @@
     let uploadData = null;
 
     async function renderTrain() {
+        // Reset state from previous navigation
+        audioFiles = [];
+        uploadData = null;
         // Check if user has an active training job
         const activeCheck = await api('/api/training/active');
         if (activeCheck.active && activeCheck.job_id) {
@@ -820,7 +823,13 @@
         }
 
         const presets = await api('/api/presets');
-        if (presets.error) return;
+        if (presets.error) {
+            app().innerHTML = `<div class="fade-in max-w-3xl mx-auto p-8 text-center">
+                <p class="text-red-600 font-medium mb-4">${esc(presets.error || 'Ön ayarlar yüklenemedi')}</p>
+                <button onclick="renderTrain()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Tekrar Dene</button>
+            </div>`;
+            return;
+        }
 
         app().innerHTML = `
         <div class="fade-in max-w-3xl mx-auto">
@@ -1086,7 +1095,7 @@
         try {
             const res = await fetch(API + '/api/upload-csv', {
                 method: 'POST', body: formData,
-                headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {},
+                credentials: 'same-origin',
             });
             const data = await res.json();
             if (data.error) { alert('Bir sorun olu\u015ftu: ' + data.error); return; }
@@ -1181,9 +1190,11 @@
         let progress = 10;
         let _pollCount = 0;
         const MAX_POLLS = 1800;
+        const _startRoute = getRoute();
         const progressEl = document.getElementById('train-progress');
         const statusEl = document.getElementById('train-status-text');
         const poll = async () => {
+            if (getRoute() !== _startRoute) return;  // User navigated away
             if (++_pollCount > MAX_POLLS) {
                 if (statusEl) statusEl.textContent = '\u0130\u015flem \u00e7ok uzun s\u00fcr\u00fcyor. L\u00fctfen sayfay\u0131 yenileyip kontrol edin.';
                 return;
@@ -1312,7 +1323,7 @@
         const MAX_AUDIO_SIZE_MB = 200;
         files.forEach(f => {
             if (f.size > MAX_AUDIO_SIZE_MB * 1024 * 1024) {
-                alert(`Dosya \u00e7ok b\u00fcy\u00fck: ${esc(f.name)} (${(f.size / 1024 / 1024).toFixed(1)}MB). Maksimum: ${MAX_AUDIO_SIZE_MB}MB`);
+                alert(`Dosya \u00e7ok b\u00fcy\u00fck: ${f.name} (${(f.size / 1024 / 1024).toFixed(1)}MB). Maksimum: ${MAX_AUDIO_SIZE_MB}MB`);
                 return;
             }
             if (!audioFiles.some(af => af.name === f.name)) {
@@ -1433,7 +1444,7 @@
         try {
             const res = await fetch(API + '/api/audio-evaluate', {
                 method: 'POST', body: fd,
-                headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {},
+                credentials: 'same-origin',
             });
             const data = await res.json();
             if (data.error) {
@@ -1452,9 +1463,11 @@
         _pollTimers.forEach(clearTimeout); _pollTimers = [];
         let _pollCount = 0;
         const MAX_POLLS = 1800;
+        const _startRoute = getRoute();
         const barEl = document.getElementById('audio-eval-bar');
         const statusEl = document.getElementById('audio-eval-status-text');
         const poll = async () => {
+            if (getRoute() !== _startRoute) return;  // User navigated away
             if (++_pollCount > MAX_POLLS) {
                 if (statusEl) statusEl.textContent = '\u0130\u015flem \u00e7ok uzun s\u00fcr\u00fcyor. L\u00fctfen sayfay\u0131 yenileyip kontrol edin.';
                 return;
@@ -1774,7 +1787,7 @@
         const MAX_AUDIO_SIZE_MB = 200;
         files.forEach(f => {
             if (f.size > MAX_AUDIO_SIZE_MB * 1024 * 1024) {
-                alert(`Dosya \u00e7ok b\u00fcy\u00fck: ${esc(f.name)} (${(f.size / 1024 / 1024).toFixed(1)}MB). Maksimum: ${MAX_AUDIO_SIZE_MB}MB`);
+                alert(`Dosya \u00e7ok b\u00fcy\u00fck: ${f.name} (${(f.size / 1024 / 1024).toFixed(1)}MB). Maksimum: ${MAX_AUDIO_SIZE_MB}MB`);
                 return;
             }
             if (!predictAudioFiles.some(af => af.name === f.name)) {
@@ -1825,7 +1838,7 @@
         try {
             const res = await fetch(API + `/api/models/${modelId}/predict-audio`, {
                 method: 'POST', body: fd,
-                headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {},
+                credentials: 'same-origin',
             });
             const data = await res.json();
             if (data.error) {
@@ -1848,10 +1861,12 @@
         _pollTimers.forEach(clearTimeout); _pollTimers = [];
         let _pollCount = 0;
         const MAX_POLLS = 1800;
+        const _startRoute = getRoute();
         const barEl = document.getElementById('audio-predict-bar');
         const statusEl = document.getElementById('audio-predict-status-text');
 
         const poll = async () => {
+            if (getRoute() !== _startRoute) return;  // User navigated away
             if (++_pollCount > MAX_POLLS) {
                 if (statusEl) statusEl.textContent = '\u0130\u015flem \u00e7ok uzun s\u00fcr\u00fcyor. L\u00fctfen sayfay\u0131 yenileyip kontrol edin.';
                 return;
@@ -1956,7 +1971,7 @@
     async function downloadAudioPredictCSV(jobId) {
         try {
             const res = await fetch(API + `/api/audio-predict/${jobId}/download-csv`, {
-                headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {},
+                credentials: 'same-origin',
             });
             if (!res.ok) { alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); return; }
             const blob = await res.blob();
@@ -2455,7 +2470,7 @@
         try {
             const res = await fetch(API + `/api/models/${modelId}/predict-batch/${encodeURIComponent(submodelName)}`, {
                 method: 'POST', body: formData,
-                headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {},
+                credentials: 'same-origin',
             });
             if (res.headers.get('Content-Type')?.includes('text/csv')) {
                 const blob = await res.blob();
@@ -2957,7 +2972,7 @@
     async function downloadExport(type, modelId, submodelName) {
         const url = API + `/api/models/${modelId}/export/${encodeURIComponent(submodelName)}/${type}`;
         try {
-            const res = await fetch(url, { headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {} });
+            const res = await fetch(url, { credentials: 'same-origin' });
             if (res.ok) {
                 const blob = await res.blob();
                 const link = document.createElement('a');
@@ -2979,7 +2994,7 @@
     async function downloadCallAnalysisCSV(modelId) {
         const url = API + `/api/models/${modelId}/call-analysis/download-csv`;
         try {
-            const res = await fetch(url, { headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {} });
+            const res = await fetch(url, { credentials: 'same-origin' });
             if (res.ok) {
                 const blob = await res.blob();
                 const link = document.createElement('a');
@@ -3136,7 +3151,7 @@
             document.getElementById('new-username').value = '';
             document.getElementById('new-displayname').value = '';
             document.getElementById('new-password').value = '';
-            setTimeout(() => renderAdmin(), 1000);
+            _pollTimers.push(setTimeout(() => { if (getRoute() === '/admin') renderAdmin(); }, 1000));
         } else {
             msgDiv.className = 'text-sm text-center text-danger-500';
             msgDiv.textContent = res.error;

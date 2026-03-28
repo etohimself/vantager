@@ -488,6 +488,7 @@ def _get_sentence_model(model_name: str = None):
             _sentence_model_cache[model_name]["last_used"] = time.time()
             return _sentence_model_cache[model_name]["model"]
         # Prevent double-load: wait if another thread is already loading this model
+        _wait_start = time.time()
         while model_name in _sentence_model_loading:
             _sentence_model_lock.release()
             time.sleep(0.5)
@@ -495,6 +496,8 @@ def _get_sentence_model(model_name: str = None):
             if model_name in _sentence_model_cache:
                 _sentence_model_cache[model_name]["last_used"] = time.time()
                 return _sentence_model_cache[model_name]["model"]
+            if time.time() - _wait_start > 120:
+                raise RuntimeError(f"Embedding model '{model_name}' yükleme zaman aşımı (120s)")
         _sentence_model_loading.add(model_name)
     # Load outside lock to avoid blocking other threads
     try:
@@ -529,6 +532,14 @@ def _embedding_cache_evictor():
             for name in to_evict:
                 del _sentence_model_cache[name]
                 log.info(f"[Embedding] Evicted idle model: {name}")
+        if to_evict:
+            gc.collect()
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except (ImportError, Exception):
+                pass
 
 threading.Thread(target=_embedding_cache_evictor, daemon=True, name="embedding-evictor").start()
 
@@ -586,7 +597,7 @@ def _load_text_pipeline_config(model_id):
     if not config_path.exists():
         return None
     try:
-        with open(config_path, "r") as f:
+        with open(config_path, "r", encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         log.warning(f"[TextPipeline] Corrupted config: {config_path}")
@@ -685,14 +696,22 @@ def _atomic_write_json(filepath: Path, data, use_safe_json=False):
 
 
 def _safe_read_json(filepath: Path, default=None):
-    """Read JSON with error recovery. Returns default if file missing or corrupt."""
+    """Read JSON with error recovery. Returns default if file missing or corrupt.
+    On corruption, creates a timestamped .corrupt.bak backup before returning default."""
     if not filepath.exists():
         return default if default is not None else []
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError) as e:
-        log.warning(f"JSON read failed for {filepath}: {e}. Using default.")
+        # Create a backup of the corrupt file before returning default
+        try:
+            backup_name = f"{filepath.stem}.corrupt.{datetime.now().strftime('%Y%m%d_%H%M%S')}{filepath.suffix}"
+            backup_path = filepath.parent / backup_name
+            shutil.copy2(str(filepath), str(backup_path))
+            log.error(f"JSON CORRUPT: {filepath} — backup saved to {backup_path}. Error: {e}")
+        except OSError as backup_err:
+            log.error(f"JSON CORRUPT: {filepath} — backup failed ({backup_err}). Error: {e}")
         return default if default is not None else []
 
 
@@ -881,64 +900,79 @@ class ResourceManager:
 resource_manager = ResourceManager()
 
 
+_vram_eviction_lock = threading.Lock()
+
 def _ensure_vram_available(needed_mb: int) -> bool:
     """Solution 7: Pre-emptive eviction — free VRAM BEFORE an operation, not after it fails.
-    Returns True if enough VRAM is available after eviction attempts."""
-    actual_free = resource_manager.get_actual_free_vram_mb()
-    if actual_free <= 0 or actual_free >= needed_mb:
-        return True  # Either no GPU detected or enough free
+    Returns True if enough VRAM is available after eviction attempts.
+    Serialized to prevent multiple threads from racing to evict and overcommit."""
+    with _vram_eviction_lock:
+        actual_free = resource_manager.get_actual_free_vram_mb()
+        if actual_free <= 0 or actual_free >= needed_mb:
+            return True  # Either no GPU detected or enough free
 
-    log.info(f"[VRAM] Need {needed_mb}MB but only {actual_free}MB free — pre-emptively evicting...")
+        log.info(f"[VRAM] Need {needed_mb}MB but only {actual_free}MB free — pre-emptively evicting...")
 
-    # Priority 1: Evict idle cached prediction models (cheapest to reload)
-    try:
-        model_cache._evict_idle(min_idle_seconds=60)
-    except Exception:
-        pass
-    gc.collect()
-    try:
-        import torch
-        if torch.cuda.is_available():
+        # Priority 1: Evict idle cached prediction models (cheapest to reload)
+        try:
+            model_cache._evict_idle(min_idle_seconds=60)
+        except Exception:
+            pass
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+        actual_free = resource_manager.get_actual_free_vram_mb()
+        if actual_free >= needed_mb:
+            return True
+
+        # Priority 2: Evict idle embedding models
+        try:
+            now = time.time()
+            with _sentence_model_lock:
+                to_evict = [n for n, e in _sentence_model_cache.items()
+                           if (now - e.get("last_used", now)) > 30]
+                for name in to_evict:
+                    log.info(f"[VRAM] Pre-evicted embedding model: {name}")
+                    del _sentence_model_cache[name]
+        except Exception:
+            pass
+        gc.collect()
+        try:
             torch.cuda.empty_cache()
-    except Exception:
-        pass
-    actual_free = resource_manager.get_actual_free_vram_mb()
-    if actual_free >= needed_mb:
-        return True
+        except Exception:
+            pass
+        actual_free = resource_manager.get_actual_free_vram_mb()
+        if actual_free >= needed_mb:
+            return True
 
-    # Priority 2: Evict idle embedding models
-    try:
-        now = time.time()
-        with _sentence_model_lock:
-            to_evict = [n for n, e in _sentence_model_cache.items()
-                       if (now - e.get("last_used", now)) > 30]
-            for name in to_evict:
-                log.info(f"[VRAM] Pre-evicted embedding model: {name}")
-                del _sentence_model_cache[name]
-    except Exception:
-        pass
-    gc.collect()
-    try:
-        torch.cuda.empty_cache()
-    except Exception:
-        pass
-    actual_free = resource_manager.get_actual_free_vram_mb()
-    if actual_free >= needed_mb:
-        return True
+        # Priority 3: Unload idle Whisper (frees most VRAM but expensive to reload)
+        # NOTE: We check idle time and set a flag here, but call _unload_whisper_model()
+        # OUTSIDE _vram_eviction_lock to avoid deadlock with _get_whisper_model() which
+        # acquires _whisper_model_lock -> _vram_eviction_lock (opposite order).
+        _should_evict_whisper = False
+        try:
+            if _whisper_model is not None:
+                idle = time.time() - _whisper_last_used  # float read is atomic in CPython
+                if idle > 10:
+                    _should_evict_whisper = True
+        except Exception:
+            pass
 
-    # Priority 3: Unload idle Whisper (frees most VRAM but expensive to reload)
-    try:
-        if _whisper_model is not None:
-            with _whisper_model_lock:
-                idle = time.time() - _whisper_last_used
-            if idle > 10:  # Only if idle for at least 10 seconds
-                log.info(f"[VRAM] Pre-evicting Whisper (idle {idle:.0f}s) to free VRAM")
-                _unload_whisper_model()
-    except Exception:
-        pass
+    # Outside _vram_eviction_lock — safe to acquire _whisper_model_lock
+    if _should_evict_whisper:
+        try:
+            log.info(f"[VRAM] Pre-evicting Whisper to free VRAM")
+            _unload_whisper_model()
+        except Exception:
+            pass
 
-    actual_free = resource_manager.get_actual_free_vram_mb()
-    return actual_free >= needed_mb
+    with _vram_eviction_lock:
+        actual_free = resource_manager.get_actual_free_vram_mb()
+        return actual_free >= needed_mb
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1172,6 +1206,15 @@ class JobStore:
                     atype = job.get("_action_type")
                     if uname and atype:
                         user_action_tracker.unregister(uname, atype)
+                    # Release resource reservations held by the stale job
+                    _stale_res_id = job.get("_resource_task_id")
+                    if _stale_res_id:
+                        resource_manager.release(_stale_res_id)
+                    _stale_model_id = job.get("_model_id")
+                    if _stale_model_id:
+                        model_ref_counter.release(_stale_model_id)
+                    if uname:
+                        release_model_quota(uname)
                     job["status"] = "error"
                     job["error"] = "İş zaman aşımına uğradı (güncelleme alınamadı)"
 
@@ -1449,12 +1492,20 @@ class LoginRateLimiter:
                     if retry_after > 0:
                         return True, retry_after
 
-            # Periodic prune of empty keys (every 5 minutes)
+            # Periodic prune of empty/stale keys (every 5 minutes)
             if now - self._last_prune > 300:
                 self._last_prune = now
-                empty_keys = [k for k, v in self._attempts.items() if not v]
-                for k in empty_keys:
+                max_window = max(t["window"] for t in self.TIERS)
+                stale_keys = [k for k, v in self._attempts.items()
+                              if not v or all(now - t > max_window for t in v)]
+                for k in stale_keys:
                     del self._attempts[k]
+                # Hard cap to prevent memory exhaustion under brute-force
+                if len(self._attempts) > 10000:
+                    oldest_keys = sorted(self._attempts.keys(),
+                                          key=lambda k: max(self._attempts[k]) if self._attempts[k] else 0)
+                    for k in oldest_keys[:len(self._attempts) - 10000]:
+                        del self._attempts[k]
 
             return False, 0
 
@@ -1834,6 +1885,14 @@ def _start_bundled_llama():
             if _llama_measured > 0:
                 resource_manager.PROFILES["llm_external"]["vram_mb"] = _llama_measured
                 log.info(f"[LLM] Measured VRAM: {_llama_measured}MB (profile updated)")
+            # Release any previous reservation before re-acquiring (prevents doubling on crash-restart)
+            resource_manager.release("llama_server")
+            # Register llama-server VRAM/RAM with ResourceManager so bookkeeping is accurate
+            _llm_vram = _llama_measured if _llama_measured > 0 else resource_manager.PROFILES["llm_external"]["vram_mb"]
+            _llm_ram = resource_manager.PROFILES["llm_external"].get("ram_mb", 500)
+            if not resource_manager.try_acquire("llama_server", "llm_external",
+                                                 vram_mb=_llm_vram, ram_mb=_llm_ram):
+                log.warning(f"[LLM] Could not register VRAM reservation ({_llm_vram}MB) — running untracked")
             log.info(f"[LLM] llama-server ready (took {i+1}s)")
             return
         except (ConnectionRefusedError, OSError, _sock.timeout):
@@ -1864,6 +1923,8 @@ def _stop_bundled_llama():
         if _llama_log_fh is not None:
             _llama_log_fh.close()
             _llama_log_fh = None
+    # Release VRAM/RAM reservation
+    resource_manager.release("llama_server")
 
 
 def _warmup_models():
@@ -1953,7 +2014,10 @@ class FairJobQueue:
             finally:
                 with self._lock:
                     self._running = None
-                    self._dispatch_next()
+                    try:
+                        self._dispatch_next()
+                    except Exception as _dne:
+                        log.error(f"[FairJobQueue] _dispatch_next failed: {_dne}")
 
         self._pool.submit(_wrapper)
 
@@ -2020,6 +2084,13 @@ class ModelCache:
         if entry:
             print(f"[ModelCache] Evicted model {model_id[:8]}…")
             del entry  # release reference for GC
+            gc.collect()
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except (ImportError, Exception):
+                pass
 
     def is_loading(self, model_id: str) -> bool:
         with self._lock:
@@ -2037,11 +2108,25 @@ class ModelCache:
         """Load a model from disk into cache.  Returns the predictor.
 
         Handles memory / VRAM errors gracefully by falling back to None.
+        Thread-safe: if another thread is already loading the same model,
+        waits for it to finish and returns the cached result.
         """
         # Fast path: already cached
         cached = self.get(model_id)
         if cached is not None:
             return cached
+
+        # Wait if another thread is already loading this model (prevent double-load)
+        _waited = 0
+        while self.is_loading(model_id):
+            time.sleep(0.2)
+            _waited += 0.2
+            if _waited > 120:
+                log.warning(f"[ModelCache] Timeout waiting for model {model_id[:8]}… to load")
+                return None
+            cached = self.get(model_id)
+            if cached is not None:
+                return cached
 
         ag_path = str(MODELS_DIR / model_id / "agmodel")
         task_type = meta.get("task_type", "tabular")
@@ -2278,7 +2363,7 @@ def load_model_meta(model_id: str) -> dict:
         if not meta_path.exists():
             return None
         try:
-            with open(meta_path, "r") as f:
+            with open(meta_path, "r", encoding="utf-8") as f:
                 return json.load(f)
         except (json.JSONDecodeError, OSError) as e:
             log.warning(f"Failed to load meta for {model_id}: {e}")
@@ -2291,6 +2376,7 @@ def save_model_meta(model_id: str, meta: dict):
     meta_path.parent.mkdir(parents=True, exist_ok=True)
     with _get_model_lock(model_id):
         _atomic_write_json(meta_path, meta, use_safe_json=True)
+    invalidate_models_cache()
 
 
 def update_model_meta_fields(model_id: str, **updates) -> dict:
@@ -2302,13 +2388,14 @@ def update_model_meta_fields(model_id: str, **updates) -> dict:
         if not meta_path.exists():
             return None
         try:
-            with open(meta_path, "r") as f:
+            with open(meta_path, "r", encoding="utf-8") as f:
                 meta = json.load(f)
         except (json.JSONDecodeError, OSError):
             return None
         meta.update(updates)
         _atomic_write_json(meta_path, meta, use_safe_json=True)
-        return meta
+    invalidate_models_cache()
+    return meta
 
 
 def increment_model_meta_counter(model_id: str, field: str, amount: int = 1) -> dict:
@@ -2318,13 +2405,14 @@ def increment_model_meta_counter(model_id: str, field: str, amount: int = 1) -> 
         if not meta_path.exists():
             return None
         try:
-            with open(meta_path, "r") as f:
+            with open(meta_path, "r", encoding="utf-8") as f:
                 meta = json.load(f)
         except (json.JSONDecodeError, OSError):
             return None
         meta[field] = meta.get(field, 0) + amount
         _atomic_write_json(meta_path, meta, use_safe_json=True)
-        return meta
+    invalidate_models_cache()
+    return meta
 
 
 def load_activity_log() -> list:
@@ -2367,8 +2455,17 @@ def get_filtered_activity(user: dict) -> list:
     return [a for a in activity if a.get("visibility", "public") == "public"]
 
 
-def get_all_models() -> list:
-    """Get list of all model metadata."""
+_all_models_cache = {"data": None, "ts": 0}
+_all_models_cache_lock = threading.Lock()
+_ALL_MODELS_CACHE_TTL = 5  # seconds
+
+def get_all_models(force_refresh: bool = False) -> list:
+    """Get list of all model metadata. Cached for 5 seconds to avoid O(n) disk I/O."""
+    now = time.time()
+    with _all_models_cache_lock:
+        if not force_refresh and _all_models_cache["data"] is not None and (now - _all_models_cache["ts"]) < _ALL_MODELS_CACHE_TTL:
+            return _all_models_cache["data"]
+    # Build outside lock to avoid blocking readers during disk I/O
     models = []
     if MODELS_DIR.exists():
         for model_dir in MODELS_DIR.iterdir():
@@ -2377,7 +2474,15 @@ def get_all_models() -> list:
                 if meta:
                     models.append(meta)
     models.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    with _all_models_cache_lock:
+        _all_models_cache["data"] = models
+        _all_models_cache["ts"] = time.time()
     return models
+
+def invalidate_models_cache():
+    """Invalidate the models cache after create/delete/update operations."""
+    with _all_models_cache_lock:
+        _all_models_cache["data"] = None
 
 
 def get_public_models() -> list:
@@ -2386,17 +2491,30 @@ def get_public_models() -> list:
 
 
 _model_quota_lock = threading.Lock()
+_model_quota_pending = {}  # username -> int (pending model creations not yet saved)
 
 def count_user_models(username: str) -> int:
     """Count total models owned by a user."""
     return sum(1 for m in get_all_models() if m.get("owner") == username)
 
 def check_and_reserve_model_quota(username: str) -> bool:
-    """Atomically check quota and reserve a slot. Returns True if allowed."""
+    """Atomically check quota and reserve a slot. Returns True if allowed.
+    The caller MUST call release_model_quota() if the model creation fails."""
     with _model_quota_lock:
-        if count_user_models(username) >= MAX_MODELS_PER_USER:
+        pending = _model_quota_pending.get(username, 0)
+        if count_user_models(username) + pending >= MAX_MODELS_PER_USER:
             return False
+        _model_quota_pending[username] = pending + 1
         return True
+
+def release_model_quota(username: str):
+    """Release a pending model quota reservation (e.g., on training failure)."""
+    with _model_quota_lock:
+        pending = _model_quota_pending.get(username, 0)
+        if pending > 0:
+            _model_quota_pending[username] = pending - 1
+        if _model_quota_pending.get(username, 0) <= 0:
+            _model_quota_pending.pop(username, None)
 
 
 def _wilson_ci(p: float, n: int, z: float = 1.96) -> tuple:
@@ -2747,6 +2865,18 @@ def _xgb_node_to_sql(node: dict, feature_columns: list, _depth: int = 0) -> str:
         return "0"
     yes_sql = _xgb_node_to_sql(yes_child, feature_columns, _depth + 1)
     no_sql = _xgb_node_to_sql(no_child, feature_columns, _depth + 1)
+    # Handle XGBoost's learned missing-value direction
+    missing_dir = node.get('missing')
+    yes_id = node.get('yes')
+    if missing_dir is not None and yes_id is not None:
+        # missing_dir tells which child NULLs go to
+        if missing_dir == yes_id:
+            null_sql = yes_sql
+        else:
+            null_sql = no_sql
+        return (f"CASE WHEN {feat_name} IS NULL THEN {null_sql} "
+                f"WHEN {feat_name} < {round(split_value, 10)} THEN {yes_sql} "
+                f"ELSE {no_sql} END")
     return f"CASE WHEN {feat_name} < {round(split_value, 10)} THEN {yes_sql} ELSE {no_sql} END"
 
 
@@ -2772,6 +2902,8 @@ def _lgbm_node_to_sql(node: dict, feature_columns: list, _depth: int = 0) -> str
         feat_name = _sql_bracket(split_feature)
     left_sql = _lgbm_node_to_sql(node.get('left_child', {'leaf_value': 0}), feature_columns, _depth + 1)
     right_sql = _lgbm_node_to_sql(node.get('right_child', {'leaf_value': 0}), feature_columns, _depth + 1)
+    if decision_type == "==":
+        return f"CASE WHEN {feat_name} = {round(threshold, 10)} THEN {left_sql} ELSE {right_sql} END"
     op = "<=" if decision_type == "<=" else "<"
     return f"CASE WHEN {feat_name} {op} {round(threshold, 10)} THEN {left_sql} ELSE {right_sql} END"
 
@@ -2802,7 +2934,7 @@ def generate_airflow_dag(model_id: str, model_name: str, submodel_name: str,
                          target_col: str, feature_columns: list, task_type: str,
                          text_columns: list = None, embedding_model: str = "") -> str:
     model_path = MODELS_DIR / model_id / "agmodel"
-    safe_submodel = submodel_name.replace(" ", "_").replace("/", "_").lower()
+    safe_submodel = re.sub(r'[^a-zA-Z0-9._-]', '_', submodel_name).lower()
 
     # For text models, generate the embedding helper code
     text_columns = text_columns or []
@@ -2870,8 +3002,8 @@ logger = logging.getLogger(__name__)
 
 MODEL_PATH = "/opt/airflow/models/{model_id}/agmodel"
 INPUT_CSV_PATH = "/opt/airflow/data/input/prediction_input.csv"
-OUTPUT_CSV_PATH = "/opt/airflow/data/output/predictions_{{{{ ds }}}}.csv"
-ERROR_LOG_PATH = "/opt/airflow/data/output/prediction_errors_{{{{ ds }}}}.csv"
+OUTPUT_CSV_PATH = "/opt/airflow/data/output/predictions_{{ds}}.csv"
+ERROR_LOG_PATH = "/opt/airflow/data/output/prediction_errors_{{ds}}.csv"
 SUBMODEL_NAME = {json.dumps(submodel_name)}
 TARGET_COLUMN = {json.dumps(target_col)}
 TASK_TYPE = {json.dumps(task_type)}
@@ -3005,7 +3137,7 @@ def generate_timeseries_airflow_dag(model_id: str, model_name: str, submodel_nam
                                      target_col: str, timestamp_column: str,
                                      item_id_column: str, prediction_length: int) -> str:
     """Generate an Airflow DAG for time series forecasting."""
-    safe_submodel = submodel_name.replace(" ", "_").replace("/", "_").lower()
+    safe_submodel = re.sub(r'[^a-zA-Z0-9._-]', '_', submodel_name).lower()
 
     dag_code = f'''"""
 Otomatik üretilmiş Airflow DAG dosyası — Zaman Serisi Tahmini.
@@ -3035,7 +3167,7 @@ logger = logging.getLogger(__name__)
 
 MODEL_PATH = "/opt/airflow/models/{model_id}/agmodel"
 INPUT_CSV_PATH = "/opt/airflow/data/input/history_input.csv"
-OUTPUT_CSV_PATH = "/opt/airflow/data/output/forecast_{{{{ ds }}}}.csv"
+OUTPUT_CSV_PATH = "/opt/airflow/data/output/forecast_{{ds}}.csv"
 SUBMODEL_NAME = {json.dumps(submodel_name)}
 TARGET_COLUMN = {json.dumps(target_col)}
 TIMESTAMP_COLUMN = {json.dumps(timestamp_column)}
@@ -3252,7 +3384,10 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
 
         dupes = df.columns[df.columns.duplicated()].tolist()
         if dupes:
-            log.warning(f"[Training] Duplicate columns detected and auto-renamed: {dupes[:5]}")
+            raise ValueError(
+                f"CSV dosyasında tekrarlanan sütun adları var: {', '.join(dupes[:5])}. "
+                f"Lütfen sütun adlarını benzersiz yapın."
+            )
 
         # ══════════════════════════════════════════════════════════
         #  TIME SERIES TRAINING PATH
@@ -3299,8 +3434,15 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
             except (ValueError, KeyError) as e:
                 raise ValueError(f"Zaman serisi verisi oluşturulamadı. Veri formatını kontrol edin: {str(e)[:100]}")
 
-            if prediction_length >= len(df) // 2:
-                raise ValueError(f"Tahmin uzunluğu ({prediction_length}) veri uzunluğunun yarısından ({len(df)//2}) küçük olmalı.")
+            # Validate per-item: each series must have enough rows for the prediction length
+            _series_lengths = df.groupby(id_col).size()
+            _min_series_len = int(_series_lengths.min())
+            if prediction_length >= _min_series_len // 2:
+                raise ValueError(
+                    f"Tahmin uzunluğu ({prediction_length}) en kısa serinin yarısından "
+                    f"({_min_series_len // 2}) küçük olmalı. "
+                    f"En kısa seri {_min_series_len} satır içeriyor."
+                )
 
             if df[target_col].nunique() < 2:
                 raise ValueError("Hedef sütundaki tüm değerler aynı. Zaman serisi tahmini yapılamaz.")
@@ -3532,12 +3674,20 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
                     residuals = test_predictions - test_y
                     rmse = float(np.sqrt((residuals ** 2).mean()))
                     y_range = float(test_y.max() - test_y.min())
-                    holdout_score = max(0.0, 1.0 - (rmse / y_range)) if y_range > 0 else 0.0
-            except Exception:
-                holdout_score = abs(internal_score)
+                    # Floor y_range to avoid misleadingly low scores for near-constant targets
+                    y_range = max(y_range, abs(float(test_y.mean())) * 0.01, 1e-6)
+                    holdout_score = max(0.0, min(1.0, 1.0 - (rmse / y_range)))
+            except Exception as _eval_err:
+                log.warning(f"[Training] Holdout evaluation failed for {sm_name}: {_eval_err}")
+                # Conservative fallback: 0.0 (unknown quality) instead of misleading abs(internal_score)
+                holdout_score = 0.0
 
             n_test = len(test_df)
-            ci_low, ci_high = _wilson_ci(holdout_score, n_test, z=1.96)
+            # Wilson CI is only meaningful for classification (proportion-based)
+            if problem_type in ("binary", "multiclass"):
+                ci_low, ci_high = _wilson_ci(holdout_score, n_test, z=1.96)
+            else:
+                ci_low, ci_high = None, None
             inf_time = measure_inference_time(predictor, sample_features, sm_name)
             sql_support = verify_sql_support(predictor, sm_name, feature_cols_embedded, target_col)
             airflow_support = get_airflow_support(sm_name)
@@ -3547,8 +3697,8 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
                 "name": sm_name,
                 "score": round(holdout_score, 4),
                 "score_internal": round(abs(internal_score), 4),
-                "ci_low": round(ci_low, 4),
-                "ci_high": round(ci_high, 4),
+                "ci_low": round(ci_low, 4) if ci_low is not None else None,
+                "ci_high": round(ci_high, 4) if ci_high is not None else None,
                 "n_test": n_test,
                 "inference_time_sec": inf_time,
                 "cpu_category": "Düşük" if inf_time < 0.05 else ("Orta" if inf_time < 0.2 else "Yüksek"),
@@ -3564,6 +3714,10 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
         submodels = [sm for sm in submodels if
                      sm["airflow_support"].get("supported") or
                      sm["sql_support"].get("easy_sql")]
+        # Fall back to all submodels if filtering removes everything
+        if not submodels and all_submodels:
+            submodels = all_submodels
+            log.info(f"[Training] No exportable submodels — keeping all {len(submodels)} models")
         hidden_count = len(all_submodels) - len(submodels)
 
         meta = {
@@ -3604,8 +3758,8 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
             try:
                 _emb_model = _get_sentence_model(embedding_model_name)
                 meta["embedding_dim"] = _emb_model.get_sentence_embedding_dimension()
-            except Exception:
-                pass
+            except Exception as _dim_err:
+                log.warning(f"[Training] Could not save embedding_dim: {_dim_err}")
 
         save_model_meta(model_id, meta)
 
@@ -3652,6 +3806,8 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
         model_ref_counter.release(model_id)
         resource_manager.release(resource_task_id)
         user_action_tracker.unregister(username, "training")
+        # Release pending quota reservation (model is now saved or failed)
+        release_model_quota(username)
         # Clean up the temp CSV directory
         try:
             csv_parent = Path(csv_path).parent
@@ -3848,42 +4004,61 @@ def _build_llm_prompt(user_prompt: str, transcript: str, schema: list) -> list:
     ]
 
 
-_llama_restarting = False  # Guard against concurrent restart attempts
+_llama_restart_event = threading.Event()
+_llama_restart_event.set()  # Initially "not restarting"
+_llama_restarting = False
 
 def _ensure_llama_running():
-    """Check if llama-server subprocess is alive; restart if crashed."""
+    """Check if llama-server subprocess is alive; restart if crashed.
+    If another thread is restarting, waits for it to finish (up to 130s)."""
     global _llama_process, _llama_log_fh, _llama_restarting
     if LLAMA_BUNDLED == "false":
         return
+    i_am_restarter = False
     with _llama_lock:
         if _llama_restarting:
-            return  # Another thread is already restarting
-        if _llama_process is not None and _llama_process.poll() is not None:
+            # Another thread is already restarting — we just wait
+            pass
+        elif _llama_process is not None and _llama_process.poll() is not None:
             exit_code = _llama_process.returncode
             log.warning(f"[LLM] llama-server crashed (exit code {exit_code}) — restarting...")
             _llama_process = None
             if _llama_log_fh:
                 _llama_log_fh.close()
                 _llama_log_fh = None
-        if _llama_process is None:
             _llama_restarting = True
+            i_am_restarter = True
+            _llama_restart_event.clear()
+        elif _llama_process is None and not _llama_restarting:
+            _llama_restarting = True
+            i_am_restarter = True
+            _llama_restart_event.clear()
         else:
             return  # Process is running fine
-    try:
-        _start_bundled_llama()
-    finally:
-        with _llama_lock:
-            _llama_restarting = False
+
+    # Only the thread that set _llama_restarting=True performs the restart
+    if i_am_restarter:
+        try:
+            _start_bundled_llama()
+        finally:
+            with _llama_lock:
+                _llama_restarting = False
+            _llama_restart_event.set()
+        return
+
+    # Wait for the restarting thread to finish
+    _llama_restart_event.wait(timeout=130)
 
 
-def _call_llm(messages: list, max_retries: int = 3) -> dict:
+def _call_llm(messages: list, max_retries: int = 2) -> dict:
     """Call the local llama.cpp API and parse the JSON response.
 
     Retries up to max_retries times on:
     - Connection errors / timeouts
     - HTTP 5xx errors
     - Malformed JSON responses
-    Uses exponential backoff: 2s, 4s, 8s between retries.
+    Uses exponential backoff: 2s, 4s between retries.
+    Worst-case: 120s timeout × 2 retries + 6s backoff = ~246s (down from 914s).
     """
     if not REQUESTS_AVAILABLE:
         raise RuntimeError("Gerekli bileşen yüklü değil. Lütfen sistem yöneticisine bildirin.")
@@ -3901,7 +4076,7 @@ def _call_llm(messages: list, max_retries: int = 3) -> dict:
     last_error = None
     for attempt in range(1, max_retries + 1):
         try:
-            resp = http_requests.post(LLAMA_CPP_URL, json=payload, timeout=300)
+            resp = http_requests.post(LLAMA_CPP_URL, json=payload, timeout=120)
             resp.raise_for_status()
             data = resp.json()
 
@@ -3988,7 +4163,7 @@ def _compute_evaluation_metrics(results: list, schema: list) -> dict:
             continue
 
         if var_type == "classification":
-            correct = sum(1 for a, p in zip(actuals, predicted) if str(a).strip().lower() == str(p).strip().lower())
+            correct = sum(1 for a, p in zip(actuals, predicted) if str(a).strip().casefold() == str(p).strip().casefold())
             accuracy = correct / len(actuals) if actuals else 0
             metrics[var_name] = {
                 "type": "classification",
@@ -4029,6 +4204,8 @@ def audio_evaluate_pipeline(job_id: str, model_id: str, model_name: str,
     if not model_ref_counter.acquire(model_id):
         audio_eval_jobs[job_id]["status"] = "error"
         audio_eval_jobs[job_id]["error"] = "Model siliniyor, işlem başlatılamadı."
+        user_action_tracker.unregister(username, "audio_eval")
+        release_model_quota(username)
         return
     try:
         # Reserve per-job processing overhead only; whisper VRAM is managed
@@ -4065,6 +4242,13 @@ def audio_evaluate_pipeline(job_id: str, model_id: str, model_name: str,
                 print(f"  [AudioEval] Transcribing: {fname}")
                 transcript = _transcribe_audio(fpath, language)
                 row["transcript"] = transcript
+
+                # Validate transcript — empty means silence/noise; skip LLM to avoid hallucinations
+                if not transcript or not transcript.strip():
+                    row["error"] = "Ses dosyasından metin çıkarılamadı (sessizlik veya gürültü)"
+                    row_results.append(row)
+                    audio_eval_jobs[job_id]["processed"] = audio_eval_jobs[job_id].get("processed", 0) + 1
+                    continue
 
                 # Step 2: Build prompt + call LLM
                 print(f"  [AudioEval] Calling LLM for: {fname}")
@@ -4172,6 +4356,7 @@ def audio_evaluate_pipeline(job_id: str, model_id: str, model_name: str,
         model_ref_counter.release(model_id)
         resource_manager.release(resource_task_id)
         user_action_tracker.unregister(username, "audio_eval")
+        release_model_quota(username)
         # Cleanup temp audio files and directory
         temp_dir = None
         for af in audio_files:
@@ -4200,6 +4385,7 @@ def audio_predict_pipeline(job_id: str, model_id: str,
     if not model_ref_counter.acquire(model_id):
         audio_predict_jobs[job_id]["status"] = "error"
         audio_predict_jobs[job_id]["error"] = "Model siliniyor, işlem başlatılamadı."
+        user_action_tracker.unregister(username, "audio_predict")
         return
     try:
         profile = resource_manager.get_profile("audio_pipeline")
@@ -4233,6 +4419,13 @@ def audio_predict_pipeline(job_id: str, model_id: str,
                 print(f"  [AudioPredict] Transcribing: {fname}")
                 transcript = _transcribe_audio(fpath, language)
                 row["transcript"] = transcript
+
+                # Validate transcript — empty means silence/noise; skip LLM to avoid hallucinations
+                if not transcript or not transcript.strip():
+                    row["error"] = "Ses dosyasından metin çıkarılamadı (sessizlik veya gürültü)"
+                    row_results.append(row)
+                    audio_predict_jobs[job_id]["processed"] = i + 1
+                    continue
 
                 # Step 2: Build prompt + call LLM
                 print(f"  [AudioPredict] Calling LLM for: {fname}")
@@ -4318,7 +4511,10 @@ def audio_predict_pipeline(job_id: str, model_id: str,
 def _sanitize_error(e) -> str:
     """Module-level error sanitizer. Strips file paths and truncates."""
     msg = str(e)
-    msg = re.sub(r'[A-Z]:\\[^\s"\']+', '[path]', msg)
+    # Windows paths: C:\..., c:\..., \\server\share\...
+    msg = re.sub(r'[A-Za-z]:[\\\/][^\s"\']*', '[path]', msg)
+    msg = re.sub(r'\\\\[^\s"\']+', '[path]', msg)
+    # Unix paths containing sensitive directories
     msg = re.sub(r'/[^\s"\']*(/data/|/models/|/temp/)[^\s"\']*', '[path]', msg)
     if len(msg) > 300:
         msg = msg[:300] + '…'
@@ -4491,6 +4687,18 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Credentials", "true")
         self.end_headers()
 
+    def _parse_json_body(self, body: bytes):
+        """Parse JSON body and validate it's a dict. Returns (data, None) or (None, sent_error)."""
+        try:
+            data = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
+            self.send_json({"error": "Geçersiz JSON verisi"}, 400)
+            return None, True
+        if not isinstance(data, dict):
+            self.send_json({"error": "JSON nesnesi bekleniyor"}, 400)
+            return None, True
+        return data, None
+
     @staticmethod
     def _safe_error_message(e: Exception) -> str:
         """Sanitize an exception message for user display."""
@@ -4614,6 +4822,16 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         content_length = self._check_content_length()
         if content_length < 0:
             return  # Already sent 413
+
+        # ── Early auth check BEFORE reading large bodies to prevent RAM exhaustion ──
+        # Auth routes have small bodies (<1KB); only read large bodies after auth verification
+        _AUTH_ROUTES = ("/api/auth/login", "/api/auth/logout", "/api/auth/self-register")
+        if path not in _AUTH_ROUTES and content_length > 1024 * 1024:  # >1MB needs auth first
+            user = self._get_current_user()
+            if not user:
+                self.send_json({"error": "Oturum açmanız gerekiyor"}, 401)
+                return
+
         body = self.rfile.read(content_length) if content_length > 0 else b""
 
         # ── Auth routes (no auth required) ──
@@ -4687,6 +4905,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             data = json.loads(body)
         except (json.JSONDecodeError, ValueError):
             return self.send_json({"error": "Geçersiz istek"}, 400)
+        if not isinstance(data, dict):
+            return self.send_json({"error": "JSON nesnesi bekleniyor"}, 400)
 
         username = data.get("username", "").strip()
         password = data.get("password", "")
@@ -4734,7 +4954,6 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(safe_json_dumps({
             "success": True,
-            "token": token,
             "user": {
                 "username": user["username"],
                 "display_name": user.get("display_name", user["username"]),
@@ -4778,6 +4997,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             data = json.loads(body)
         except (json.JSONDecodeError, ValueError):
             return self.send_json({"error": "Geçersiz istek"}, 400)
+        if not isinstance(data, dict):
+            return self.send_json({"error": "JSON nesnesi bekleniyor"}, 400)
 
         username = data.get("username", "").strip().lower()
         password = data.get("password", "")
@@ -4834,6 +5055,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             data = json.loads(body)
         except (json.JSONDecodeError, ValueError):
             return self.send_json({"error": "Geçersiz istek"}, 400)
+        if not isinstance(data, dict):
+            return self.send_json({"error": "JSON nesnesi bekleniyor"}, 400)
 
         username = data.get("username", "").strip().lower()
         password = data.get("password", "")
@@ -4897,6 +5120,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             data = json.loads(body)
         except (json.JSONDecodeError, ValueError):
             return self.send_json({"error": "Geçersiz istek"}, 400)
+        if not isinstance(data, dict):
+            return self.send_json({"error": "JSON nesnesi bekleniyor"}, 400)
 
         old_password = data.get("old_password", "")
         new_password = data.get("new_password", "")
@@ -4945,6 +5170,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             data = json.loads(body)
         except (json.JSONDecodeError, ValueError):
             return self.send_json({"error": "Geçersiz istek"}, 400)
+        if not isinstance(data, dict):
+            return self.send_json({"error": "JSON nesnesi bekleniyor"}, 400)
 
         target_username = data.get("username", "").strip().lower()
         new_role = data.get("role", "")
@@ -4985,6 +5212,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             data = json.loads(body)
         except (json.JSONDecodeError, ValueError):
             return self.send_json({"error": "Geçersiz istek"}, 400)
+        if not isinstance(data, dict):
+            return self.send_json({"error": "JSON nesnesi bekleniyor"}, 400)
         username = data.get("username", "").strip()
         if not username:
             return self.send_json({"error": "Kullanıcı adı gerekli"}, 400)
@@ -5009,6 +5238,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             data = json.loads(body)
         except (json.JSONDecodeError, ValueError):
             return self.send_json({"error": "Geçersiz istek"}, 400)
+        if not isinstance(data, dict):
+            return self.send_json({"error": "JSON nesnesi bekleniyor"}, 400)
         username = data.get("username", "").strip()
         if not username:
             return self.send_json({"error": "Kullanıcı adı gerekli"}, 400)
@@ -5169,9 +5400,12 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         # Include cache status so the frontend can show load/predict button
         meta["model_loaded"] = model_cache.is_loaded(model_id)
 
+        # Strip internal infrastructure details from response
+        ca = meta.get("call_analysis", {})
+        if isinstance(ca, dict):
+            ca.pop("llm_endpoint", None)
         # Strip transcripts for non-owner/non-admin
         if meta.get("task_type") == "call_analysis" and meta.get("owner") != user["username"] and user["role"] not in ("admin", "master_admin"):
-            ca = meta.get("call_analysis", {})
             if ca.get("row_results"):
                 for row in ca["row_results"]:
                     row.pop("transcript", None)
@@ -5292,10 +5526,10 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         if not check_and_reserve_model_quota(user["username"]):
             return self.send_json({"error": f"Analiz limitinize ulaştınız (maksimum {MAX_MODELS_PER_USER}). Eski analizleri silerek yer açabilirsiniz."}, 429)
 
-        try:
-            data = json.loads(body)
-        except (json.JSONDecodeError, ValueError):
-            return self.send_json({"error": "Geçersiz JSON verisi"}, 400)
+        data, err = self._parse_json_body(body)
+        if err:
+            release_model_quota(user["username"])
+            return
 
         temp_id = data.get("temp_id")
         target_col = data.get("target_column")
@@ -5303,6 +5537,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         preset = data.get("preset", "medium_quality")
         model_name = data.get("model_name", f"Model_{datetime.now().strftime('%Y%m%d_%H%M')}")
         if len(model_name) > 200:
+            release_model_quota(user["username"])
             return self.send_json({"error": "Analiz adı en fazla 200 karakter olabilir"}, 400)
         visibility = data.get("visibility", "private")
 
@@ -5314,6 +5549,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             if prediction_length < 1:
                 prediction_length = 10
             if prediction_length > MAX_PREDICTION_LENGTH:
+                release_model_quota(user["username"])
                 return self.send_json({
                     "error": f"Tahmin uzunluğu çok büyük. Maksimum: {MAX_PREDICTION_LENGTH}"
                 }, 400)
@@ -5322,23 +5558,28 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
 
         if task_type == "timeseries":
             if not AUTOGLUON_TS_AVAILABLE:
+                release_model_quota(user["username"])
                 return self.send_json({"error": "autogluon.timeseries yüklü değil"}, 500)
             if not timestamp_column:
+                release_model_quota(user["username"])
                 return self.send_json({"error": "Zaman serisi için timestamp_column gerekli"}, 400)
 
         if visibility not in ("public", "private"):
             visibility = "private"
 
         if not temp_id or not target_col:
+            release_model_quota(user["username"])
             return self.send_json({"error": "temp_id veya target_column eksik"}, 400)
 
         # Sanitize temp_id to prevent path traversal
         temp_id = re.sub(r'[^a-f0-9\-]', '', temp_id)
         temp_dir = DATA_DIR / "temp" / temp_id
         if not temp_dir.exists():
+            release_model_quota(user["username"])
             return self.send_json({"error": "Geçici dosya bulunamadı. Lütfen CSV'yi tekrar yükleyin."}, 400)
         csv_files = list(temp_dir.glob("*.csv"))
         if not csv_files:
+            release_model_quota(user["username"])
             return self.send_json({"error": "CSV dosyası bulunamadı"}, 400)
 
         csv_path = str(csv_files[0])
@@ -5348,22 +5589,27 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         # Atomic copy: write to tmp then rename (crash-safe on network volumes)
         _tmp_csv = model_dir / ".training_data.csv.tmp"
         shutil.copy2(csv_path, _tmp_csv)
-        os.replace(str(_tmp_csv), str(model_dir / "training_data.csv"))
+        durable_csv_path = str(model_dir / "training_data.csv")
+        os.replace(str(_tmp_csv), durable_csv_path)
+
+        # Clean up temp directory now that we have the durable copy
+        _cleanup_temp_dir(temp_id)
 
         # ── Per-user concurrency check (atomic, AFTER all validation) ──
         job_id = str(uuid.uuid4())
         allowed, reason = user_action_tracker.try_register(user["username"], "training", job_id)
         if not allowed:
             shutil.rmtree(model_dir, ignore_errors=True)
+            release_model_quota(user["username"])
             return self.send_json({"error": reason}, 429)
 
-        training_jobs[job_id] = {"status": "queued", "model_id": model_id, "_username": user["username"], "_action_type": "training"}
+        training_jobs[job_id] = {"status": "queued", "model_id": model_id, "_username": user["username"], "_action_type": "training", "_resource_task_id": f"training_{job_id}", "_model_id": model_id}
 
         try:
             _training_queue.submit(
                 user["username"], job_id,
                 train_model,
-                job_id, model_id, csv_path, target_col, task_type, preset, model_name,
+                job_id, model_id, durable_csv_path, target_col, task_type, preset, model_name,
                 user["username"], visibility,
                 timestamp_column=timestamp_column,
                 item_id_column=item_id_column,
@@ -5372,6 +5618,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             # Queue submission failed — unregister so user isn't permanently locked
             user_action_tracker.unregister(user["username"], "training")
+            release_model_quota(user["username"])
             training_jobs[job_id]["status"] = "error"
             training_jobs[job_id]["error"] = "İş kuyruğa eklenemedi."
             shutil.rmtree(model_dir, ignore_errors=True)
@@ -5439,6 +5686,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             data = json.loads(body)
         except (json.JSONDecodeError, ValueError):
             return self.send_json({"error": "Geçersiz JSON verisi"}, 400)
+        if not isinstance(data, dict):
+            return self.send_json({"error": "JSON nesnesi bekleniyor"}, 400)
 
         # ── Handle explicit load request from UI ──
         if data.get("_load_only"):
@@ -5454,33 +5703,33 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         if not model_ref_counter.acquire(model_id):
             return self.send_json({"error": "Model siliniyor, lütfen bekleyin"}, 409)
 
-        # Solution 6: Limit concurrent predictions
-        if not _prediction_semaphore.acquire(timeout=15):
+        # Solution 6: Limit concurrent predictions (non-blocking to avoid thread pile-up)
+        if not _prediction_semaphore.acquire(timeout=0):
             model_ref_counter.release(model_id)
             return self.send_json({"error": "Sunucu meşgul. Lütfen birkaç saniye bekleyin."}, 503)
 
         # Solution 4: Use measured VRAM if available, else profile default
         _pred_resource_id = f"predict_{uuid.uuid4().hex[:8]}"
-        _pred_vram = meta.get("measured_vram_peak_mb", resource_manager.PROFILES["prediction_model_load"]["vram_mb"])
-        _emb_entry = _sentence_model_cache.get(meta.get("embedding_model", DEFAULT_EMBEDDING_MODEL))
-        if meta.get("text_columns") and _emb_entry:
-            _pred_vram += _emb_entry.get("measured_vram_mb", 500)
-        elif meta.get("text_columns"):
-            _pred_vram += 500  # fallback for unmeasured embeddings
-
-        # Solution 7: Pre-emptive eviction if VRAM tight
-        if _pred_vram > 0:
-            if not _ensure_vram_available(_pred_vram + 300):
-                log.warning(f"[VRAM] Pre-eviction insufficient: needed {_pred_vram + 300}MB")
-
-        if not resource_manager.try_acquire(_pred_resource_id, "prediction_model_load",
-                                            vram_mb=_pred_vram,
-                                            ram_mb=resource_manager.PROFILES["prediction_model_load"]["ram_mb"]):
-            _prediction_semaphore.release()
-            model_ref_counter.release(model_id)
-            return self.send_json({"error": "Sunucu meşgul. Lütfen birkaç saniye bekleyip tekrar deneyin."}, 503)
-
+        _pred_resource_acquired = False
         try:
+            _pred_vram = meta.get("measured_vram_peak_mb", resource_manager.PROFILES["prediction_model_load"]["vram_mb"])
+            with _sentence_model_lock:
+                _emb_entry = _sentence_model_cache.get(meta.get("embedding_model", DEFAULT_EMBEDDING_MODEL))
+            if meta.get("text_columns") and _emb_entry:
+                _pred_vram += _emb_entry.get("measured_vram_mb", 500)
+            elif meta.get("text_columns"):
+                _pred_vram += 500  # fallback for unmeasured embeddings
+
+            # Solution 7: Pre-emptive eviction if VRAM tight
+            if _pred_vram > 0:
+                if not _ensure_vram_available(_pred_vram + 300):
+                    log.warning(f"[VRAM] Pre-eviction insufficient: needed {_pred_vram + 300}MB")
+
+            if not resource_manager.try_acquire(_pred_resource_id, "prediction_model_load",
+                                                vram_mb=_pred_vram,
+                                                ram_mb=resource_manager.PROFILES["prediction_model_load"]["ram_mb"]):
+                return self.send_json({"error": "Sunucu meşgul. Lütfen birkaç saniye bekleyip tekrar deneyin."}, 503)
+            _pred_resource_acquired = True
             # ── Time Series prediction path ──
             if meta.get("task_type") == "timeseries":
                 if not AUTOGLUON_TS_AVAILABLE:
@@ -5549,9 +5798,10 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             required_cols = set(meta.get("feature_columns", []))
             provided_cols = set(features.keys())
             missing = required_cols - provided_cols
-            if missing and len(missing) > len(required_cols) * 0.5:
+            # Reject if >20% of columns are missing (strict but allows minor omissions)
+            if missing and len(missing) > max(1, len(required_cols) * 0.2):
                 return self.send_json({
-                    "error": f"Eksik özellik sütunları: {', '.join(sorted(list(missing)[:5]))}"
+                    "error": f"Eksik özellik sütunları: {', '.join(sorted(list(missing)[:10]))}"
                 }, 400)
             cleaned_features = clean_prediction_input(features, column_types)
             predictor = model_cache.load_model(model_id, meta)
@@ -5570,6 +5820,11 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                     _pred_text_columns = pipeline_config.get("text_columns", [])
 
             _pred_text_cols_present = [c for c in _pred_text_columns if c in input_df.columns]
+            _pred_text_cols_missing = [c for c in _pred_text_columns if c not in input_df.columns]
+            if _pred_text_cols_missing:
+                return self.send_json({
+                    "error": f"Eksik metin sütunları: {', '.join(_pred_text_cols_missing)}"
+                }, 400)
             if _pred_text_cols_present:
                 if not SENTENCE_TRANSFORMERS_AVAILABLE:
                     return self.send_json({"error": "sentence-transformers yüklü değil"}, 500)
@@ -5647,7 +5902,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             traceback.print_exc()
             self.send_json({"error": self._safe_error_message(e)}, 500)
         finally:
-            resource_manager.release(_pred_resource_id)
+            if _pred_resource_acquired:
+                resource_manager.release(_pred_resource_id)
             _prediction_semaphore.release()
             model_ref_counter.release(model_id)
 
@@ -5673,33 +5929,33 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         if not model_ref_counter.acquire(model_id):
             return self.send_json({"error": "Model siliniyor, lütfen bekleyin"}, 409)
 
-        # Solution 6: Limit concurrent predictions
-        if not _prediction_semaphore.acquire(timeout=15):
+        # Solution 6: Limit concurrent predictions (non-blocking to avoid thread pile-up)
+        if not _prediction_semaphore.acquire(timeout=0):
             model_ref_counter.release(model_id)
             return self.send_json({"error": "Sunucu meşgul. Lütfen birkaç saniye bekleyin."}, 503)
 
         # Solution 4: Use measured VRAM if available
         _bpred_resource_id = f"batch_predict_{uuid.uuid4().hex[:8]}"
-        _bp_vram = meta.get("measured_vram_peak_mb", resource_manager.PROFILES["prediction_model_load"]["vram_mb"])
-        _emb_entry_b = _sentence_model_cache.get(meta.get("embedding_model", DEFAULT_EMBEDDING_MODEL))
-        if meta.get("text_columns") and _emb_entry_b:
-            _bp_vram += _emb_entry_b.get("measured_vram_mb", 500)
-        elif meta.get("text_columns"):
-            _bp_vram += 500
-
-        # Solution 7: Pre-emptive eviction
-        if _bp_vram > 0:
-            if not _ensure_vram_available(_bp_vram + 300):
-                log.warning(f"[VRAM] Pre-eviction insufficient: needed {_bp_vram + 300}MB")
-
-        if not resource_manager.try_acquire(_bpred_resource_id, "prediction_model_load",
-                                            vram_mb=_bp_vram,
-                                            ram_mb=resource_manager.PROFILES["prediction_model_load"]["ram_mb"]):
-            _prediction_semaphore.release()
-            model_ref_counter.release(model_id)
-            return self.send_json({"error": "Sunucu meşgul. Lütfen birkaç saniye bekleyip tekrar deneyin."}, 503)
-
+        _bp_resource_acquired = False
         try:
+            _bp_vram = meta.get("measured_vram_peak_mb", resource_manager.PROFILES["prediction_model_load"]["vram_mb"])
+            with _sentence_model_lock:
+                _emb_entry_b = _sentence_model_cache.get(meta.get("embedding_model", DEFAULT_EMBEDDING_MODEL))
+            if meta.get("text_columns") and _emb_entry_b:
+                _bp_vram += _emb_entry_b.get("measured_vram_mb", 500)
+            elif meta.get("text_columns"):
+                _bp_vram += 500
+
+            # Solution 7: Pre-emptive eviction
+            if _bp_vram > 0:
+                if not _ensure_vram_available(_bp_vram + 300):
+                    log.warning(f"[VRAM] Pre-eviction insufficient: needed {_bp_vram + 300}MB")
+
+            if not resource_manager.try_acquire(_bpred_resource_id, "prediction_model_load",
+                                                vram_mb=_bp_vram,
+                                                ram_mb=resource_manager.PROFILES["prediction_model_load"]["ram_mb"]):
+                return self.send_json({"error": "Sunucu meşgul. Lütfen birkaç saniye bekleyip tekrar deneyin."}, 503)
+            _bp_resource_acquired = True
             if "multipart/form-data" in content_type:
                 boundary = self._extract_boundary(content_type)
                 if not boundary:
@@ -5714,6 +5970,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                     data = json.loads(body)
                 except (json.JSONDecodeError, ValueError):
                     return self.send_json({"error": "Geçersiz JSON verisi"}, 400)
+                if not isinstance(data, dict):
+                    return self.send_json({"error": "JSON nesnesi bekleniyor"}, 400)
                 input_df = pd.DataFrame(data.get("rows", []))
 
             if len(input_df) > MAX_BATCH_ROWS:
@@ -5855,7 +6113,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             traceback.print_exc()
             self.send_json({"error": self._safe_error_message(e)}, 500)
         finally:
-            resource_manager.release(_bpred_resource_id)
+            if _bp_resource_acquired:
+                resource_manager.release(_bpred_resource_id)
             _prediction_semaphore.release()
             model_ref_counter.release(model_id)
 
@@ -5901,7 +6160,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                 prediction_length=meta.get("prediction_length", 10),
             )
 
-            safe_submodel = submodel_name.replace(" ", "_").replace("/", "_").lower()
+            safe_submodel = re.sub(r'[^a-zA-Z0-9._-]', '_', submodel_name).lower()
 
             readme = f"""# Airflow DAG Paketi — Zaman Serisi
 ## Model: {meta['name']}
@@ -5966,7 +6225,7 @@ CSV dosyası en az şu sütunları içermelidir:
             embedding_model=meta.get("embedding_model", ""),
         )
 
-        safe_submodel = submodel_name.replace(" ", "_").replace("/", "_").lower()
+        safe_submodel = re.sub(r'[^a-zA-Z0-9._-]', '_', submodel_name).lower()
 
         if meta.get("text_columns"):
             readme = f"""# Airflow DAG Paketi — Metin Embedding Destekli
@@ -6046,6 +6305,9 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             return self.send_json({"error": "Model bulunamadı"}, 404)
         if not self._check_model_access(meta, user):
             return
+        # Validate submodel exists
+        if not any(sm["name"] == submodel_name for sm in meta.get("submodels", [])):
+            return self.send_json({"error": f"Alt model bulunamadı: {submodel_name}"}, 404)
 
         # Time series models don't support SQL export
         if meta.get("task_type") == "timeseries":
@@ -6119,6 +6381,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             data = json.loads(body)
         except (json.JSONDecodeError, ValueError):
             return self.send_json({"error": "Geçersiz istek"}, 400)
+        if not isinstance(data, dict):
+            return self.send_json({"error": "JSON nesnesi bekleniyor"}, 400)
 
         visibility = data.get("visibility", "public")
         if visibility not in ("public", "private"):
@@ -6126,12 +6390,12 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
 
         old_visibility = meta.get("visibility", "private")
         was_ever_public = meta.get("_was_public", False)
+        label = "Herkese Açık" if visibility == "public" else "Özel"
         meta["visibility"] = visibility
         update_fields = {"visibility": visibility}
 
         # Log all visibility changes for admin audit trail
         if visibility != old_visibility:
-            label = "Herkese Açık" if visibility == "public" else "Özel"
             add_activity("visibility_changed", model_id, meta.get("name", ""),
                          f"Görünürlük değiştirildi: {label}", username=user["username"])
 
@@ -6160,6 +6424,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             data = json.loads(body)
         except (json.JSONDecodeError, ValueError):
             return self.send_json({"error": "Geçersiz istek"}, 400)
+        if not isinstance(data, dict):
+            return self.send_json({"error": "JSON nesnesi bekleniyor"}, 400)
 
         endorse = data.get("endorsed", False)
         endorsed_by = admin["username"] if endorse else None
@@ -6184,6 +6450,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             data = json.loads(body)
         except (json.JSONDecodeError, ValueError):
             return self.send_json({"error": "Geçersiz JSON verisi"}, 400)
+        if not isinstance(data, dict):
+            return self.send_json({"error": "JSON nesnesi bekleniyor"}, 400)
         try:
             inference_time = float(data.get("inference_time_sec", 0.1))
             num_rows = int(data.get("num_rows", 1000))
@@ -6226,6 +6494,10 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             self.send_json({"error": f"Silme hatası: {self._safe_error_message(e)}"}, 500)
         finally:
             model_ref_counter.unmark_deletion(model_id)
+            # Clean up per-model lock to prevent unbounded dict growth
+            with _per_model_locks_guard:
+                _per_model_locks.pop(model_id, None)
+            invalidate_models_cache()
 
     def handle_explain(self, model_id, submodel_name):
         user = self._require_auth()
@@ -7105,12 +7377,15 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             return self.send_json({"error": f"Analiz limitinize ulaştınız (maksimum {MAX_MODELS_PER_USER}). Eski analizleri silerek yer açabilirsiniz."}, 429)
 
         # ── Per-user concurrency check ──
+        _username = user["username"]
         content_type = self.headers.get("Content-Type", "")
         if "multipart/form-data" not in content_type:
+            release_model_quota(_username)
             return self.send_json({"error": "multipart/form-data bekleniyor"}, 400)
 
         boundary = self._extract_boundary(content_type)
         if not boundary:
+            release_model_quota(_username)
             return self.send_json({"error": "Geçersiz Content-Type başlığı"}, 400)
 
         parts = self._parse_multipart_multi(body, boundary)
@@ -7118,6 +7393,7 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         # Extract text fields
         model_name = parts.get("model_name", {}).get("value", f"Ses Analizi {datetime.now().strftime('%Y%m%d_%H%M')}")
         if len(model_name) > 200:
+            release_model_quota(_username)
             return self.send_json({"error": "Analiz adı en fazla 200 karakter olabilir"}, 400)
         schema_json = parts.get("schema", {}).get("value", "[]")
         prompt = parts.get("prompt", {}).get("value", "")
@@ -7129,21 +7405,26 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             schema = json.loads(schema_json)
             actuals_map = json.loads(actuals_json)
         except json.JSONDecodeError as e:
+            release_model_quota(_username)
             return self.send_json({"error": f"JSON ayrıştırma hatası: {self._safe_error_message(e)}"}, 400)
 
         if not schema:
+            release_model_quota(_username)
             return self.send_json({"error": "En az bir değişken tanımlanmalı"}, 400)
         if not prompt.strip():
+            release_model_quota(_username)
             return self.send_json({"error": "Değerlendirme prompt'u gerekli"}, 400)
 
         # Collect audio files
         audio_files_parts = parts.get("_files_audio_files", [])
         if not audio_files_parts:
+            release_model_quota(_username)
             return self.send_json({"error": "En az bir ses dosyası yüklenmeli"}, 400)
 
         # Validate individual audio file sizes
         for af in audio_files_parts:
             if len(af.get("data", b"")) > MAX_AUDIO_FILE_SIZE_BYTES:
+                release_model_quota(_username)
                 return self.send_json({
                     "error": f"Ses dosyası '{af.get('filename', '?')}' çok büyük. "
                              f"Maksimum: {MAX_AUDIO_FILE_SIZE_MB}MB"
@@ -7170,6 +7451,7 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         allowed, reason = user_action_tracker.try_register(user["username"], "audio_eval", job_id)
         if not allowed:
             shutil.rmtree(temp_dir, ignore_errors=True)
+            release_model_quota(user["username"])
             return self.send_json({"error": reason}, 429)
 
         audio_eval_jobs[job_id] = {
@@ -7191,6 +7473,7 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             )
         except RuntimeError:
             user_action_tracker.unregister(user["username"], "audio_eval")
+            release_model_quota(user["username"])
             shutil.rmtree(temp_dir, ignore_errors=True)
             return self.send_json({"error": "Sunucu kapanıyor. Lütfen tekrar deneyin."}, 503)
 
@@ -7335,7 +7618,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         }
 
         try:
-            _audio_eval_pool.submit(
+            _audio_eval_queue.submit(
+                user["username"], job_id,
                 audio_predict_pipeline,
                 job_id, model_id,
                 audio_files, schema, prompt, language,
@@ -7464,21 +7748,34 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
     def _parse_multipart(self, body: bytes, boundary: str) -> dict:
         parts = {}
         boundary_bytes = boundary.encode()
-        sections = body.split(b"--" + boundary_bytes)
+        # RFC 2046: boundaries are preceded by CRLF (except at start of body)
+        delimiter = b"\r\n--" + boundary_bytes
+        # Handle first boundary (may not have leading CRLF)
+        first_boundary = b"--" + boundary_bytes
+        start_idx = body.find(first_boundary)
+        if start_idx == -1:
+            return parts
+        body_after_first = body[start_idx + len(first_boundary):]
+        sections = body_after_first.split(delimiter)
 
         for section in sections:
             if b"Content-Disposition" not in section:
                 continue
+            # Strip leading CRLF from section
+            if section.startswith(b"\r\n"):
+                section = section[2:]
             header_end = section.find(b"\r\n\r\n")
             if header_end == -1:
                 continue
             header_part = section[:header_end].decode("utf-8", errors="replace")
             content = section[header_end + 4:]
+            # Remove trailing CRLF (part of the delimiter, not the content)
             if content.endswith(b"\r\n"):
                 content = content[:-2]
-            if content.endswith(b"--"):
-                content = content[:-2]
-            if content.endswith(b"\r\n"):
+            # Remove closing boundary marker "--" only from the very last section
+            if content.endswith(b"--\r\n"):
+                content = content[:-4]
+            elif content.endswith(b"--"):
                 content = content[:-2]
 
             name_match = re.search(r'name="([^"]+)"', header_part)
@@ -7596,8 +7893,36 @@ def main():
 ╚══════════════════════════════════════════════════════════════╝
     """)
 
-    # ── Create threaded HTTP server ──
-    server = http.server.ThreadingHTTPServer((HOST, PORT), PredictionAPIHandler)
+    # ── Create threaded HTTP server with connection limit ──
+    class BoundedThreadingHTTPServer(http.server.ThreadingHTTPServer):
+        """ThreadingHTTPServer with a bounded thread pool to prevent thread exhaustion DoS."""
+        _MAX_THREADS = 100
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._thread_semaphore = threading.BoundedSemaphore(self._MAX_THREADS)
+
+        def process_request(self, request, client_address):
+            if self._thread_semaphore.acquire(blocking=False):
+                try:
+                    super().process_request(request, client_address)
+                except Exception:
+                    self._thread_semaphore.release()
+                    raise
+            else:
+                # Too many connections — reject immediately
+                try:
+                    request.close()
+                except Exception:
+                    pass
+
+        def process_request_thread(self, request, client_address):
+            try:
+                super().process_request_thread(request, client_address)
+            finally:
+                self._thread_semaphore.release()
+
+    server = BoundedThreadingHTTPServer((HOST, PORT), PredictionAPIHandler)
     server.daemon_threads = True  # Threads die with the server
 
     # ── Graceful shutdown handler ──
