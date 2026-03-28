@@ -245,7 +245,7 @@ def clean_prediction_input(features_dict, column_types):
         if value is None or value == '' or value == 'null' or value == 'NaN' or value == 'nan':
             cleaned[key] = np.nan
             continue
-        col_type = column_types.get(key, '')
+        col_type = column_types.get(key, '').lower()
         if any(t in col_type for t in ['int', 'float', 'number']):
             try:
                 val = float(value)
@@ -2626,23 +2626,28 @@ def _try_lightgbm_sql(obj, feature_columns: list) -> str:
 
 
 def _lgbm_dump_to_sql(model_dump: dict, feature_columns: list) -> str:
+    _SQL_MAX_TREES = 30
     trees = model_dump.get('tree_info', [])
     if not trees:
         return None
     model_feature_names = model_dump.get('feature_names', [])
     sql_cols = model_feature_names if model_feature_names else feature_columns
     tree_sqls = []
-    for tree_info in trees[:30]:
+    _trees_truncated = len(trees) > _SQL_MAX_TREES
+    for tree_info in trees[:_SQL_MAX_TREES]:
         tree = tree_info.get('tree_structure', {})
         sql = _lgbm_node_to_sql(tree, sql_cols)
         tree_sqls.append(f"({sql})")
     if not tree_sqls:
         return None
+    truncation_warning = ""
+    if _trees_truncated:
+        truncation_warning = f"/* UYARI: Model {len(trees)} ağaç içeriyor, SQL yalnızca ilk {_SQL_MAX_TREES} ağacı kullanıyor — sonuçlar yaklaşık olacaktır */\n"
     sum_expr = " + ".join(tree_sqls)
     objective = model_dump.get('objective', '')
     if 'binary' in objective:
-        return f"1.0 / (1.0 + EXP(-({sum_expr})))"
-    return sum_expr
+        return f"{truncation_warning}1.0 / (1.0 + EXP(-({sum_expr})))"
+    return f"{truncation_warning}{sum_expr}"
 
 
 def _try_xgboost_sql(obj, feature_columns: list) -> str:
@@ -2659,11 +2664,13 @@ def _try_xgboost_sql(obj, feature_columns: list) -> str:
             sql_cols = bfn if bfn else feature_columns
         except Exception:
             sql_cols = feature_columns
+        _SQL_MAX_TREES = 30
         trees = booster.get_dump(dump_format='json')
         if not trees:
             return None
+        _trees_truncated = len(trees) > _SQL_MAX_TREES
         tree_sqls = []
-        for tree_json_str in trees[:30]:
+        for tree_json_str in trees[:_SQL_MAX_TREES]:
             tree_data = json.loads(tree_json_str)
             sql = _xgb_node_to_sql(tree_data, sql_cols)
             tree_sqls.append(f"({sql})")
@@ -2679,9 +2686,12 @@ def _try_xgboost_sql(obj, feature_columns: list) -> str:
                 objective = config.get('learner', {}).get('objective', {}).get('name', '')
             except Exception:
                 pass
+        truncation_warning = ""
+        if _trees_truncated:
+            truncation_warning = f"/* UYARI: Model {len(trees)} ağaç içeriyor, SQL yalnızca ilk {_SQL_MAX_TREES} ağacı kullanıyor — sonuçlar yaklaşık olacaktır */\n"
         if 'binary' in objective:
-            return f"1.0 / (1.0 + EXP(-({sum_expr})))"
-        return sum_expr
+            return f"{truncation_warning}1.0 / (1.0 + EXP(-({sum_expr})))"
+        return f"{truncation_warning}{sum_expr}"
     except Exception as e:
         log.debug(f"XGBoost SQL generation failed: {e}")
     return None
@@ -3922,11 +3932,15 @@ def _get_whisper_model():
     return _whisper_model
 
 
-def _unload_whisper_model():
-    """Unload Whisper model to free GPU VRAM and RAM."""
+def _unload_whisper_model(min_idle_seconds: float = 0):
+    """Unload Whisper model to free GPU VRAM and RAM.
+    If min_idle_seconds > 0, re-checks idle time under lock to prevent TOCTOU race."""
     global _whisper_model
     with _whisper_model_lock:
         if _whisper_model is not None:
+            # Re-check idle time under lock to avoid unloading a freshly-used model
+            if min_idle_seconds > 0 and (time.time() - _whisper_last_used) < min_idle_seconds:
+                return
             _whisper_model = None
             resource_manager.release("whisper_model")
             gc.collect()
@@ -3963,7 +3977,7 @@ def _whisper_idle_monitor():
             idle_time = time.time() - last_used
             if idle_time > _WHISPER_IDLE_TIMEOUT:
                 log.info(f"[Whisper] Idle for {idle_time:.0f}s, unloading to free resources")
-                _unload_whisper_model()
+                _unload_whisper_model(min_idle_seconds=_WHISPER_IDLE_TIMEOUT)
 
 # Start whisper idle monitor
 threading.Thread(target=_whisper_idle_monitor, daemon=True).start()
@@ -4079,15 +4093,15 @@ def _ensure_llama_running():
     _llama_restart_event.wait(timeout=130)
 
 
-def _call_llm(messages: list, max_retries: int = 2) -> dict:
+def _call_llm(messages: list, max_attempts: int = 2) -> dict:
     """Call the local llama.cpp API and parse the JSON response.
 
-    Retries up to max_retries times on:
+    Makes up to max_attempts total attempts (1 initial + N-1 retries) on:
     - Connection errors / timeouts
     - HTTP 5xx errors
     - Malformed JSON responses
-    Uses exponential backoff: 2s, 4s between retries.
-    Worst-case: 120s timeout × 2 retries + 6s backoff = ~246s (down from 914s).
+    Uses exponential backoff: 2s, 4s between attempts.
+    Worst-case: 120s timeout × 2 attempts + 6s backoff = ~246s.
     """
     if not REQUESTS_AVAILABLE:
         raise RuntimeError("Gerekli bileşen yüklü değil. Lütfen sistem yöneticisine bildirin.")
@@ -4103,7 +4117,7 @@ def _call_llm(messages: list, max_retries: int = 2) -> dict:
     }
 
     last_error = None
-    for attempt in range(1, max_retries + 1):
+    for attempt in range(1, max_attempts + 1):
         try:
             resp = http_requests.post(LLAMA_CPP_URL, json=payload, timeout=120)
             resp.raise_for_status()
@@ -4125,49 +4139,57 @@ def _call_llm(messages: list, max_retries: int = 2) -> dict:
             elif "```" in json_str:
                 json_str = json_str.split("```")[1].split("```")[0].strip()
 
-            # Try brace extraction as fallback
+            # Try brace extraction as fallback — match balanced braces
             if not json_str.startswith("{"):
                 start = json_str.find("{")
-                end = json_str.rfind("}") + 1
-                if start != -1 and end > start:
-                    json_str = json_str[start:end]
+                if start != -1:
+                    depth = 0
+                    end = start
+                    for _ci in range(start, len(json_str)):
+                        if json_str[_ci] == '{': depth += 1
+                        elif json_str[_ci] == '}': depth -= 1
+                        if depth == 0:
+                            end = _ci + 1
+                            break
+                    if end > start:
+                        json_str = json_str[start:end]
 
             result = json.loads(json_str)
             if not isinstance(result, dict) or not result:
                 raise json.JSONDecodeError("LLM boş veya geçersiz JSON döndü", json_str, 0)
             if attempt > 1:
-                log.info(f"  [LLM] Succeeded on attempt {attempt}/{max_retries}")
+                log.info(f"  [LLM] Succeeded on attempt {attempt}/{max_attempts}")
             return result
 
         except json.JSONDecodeError as e:
             last_error = e
-            log.warning(f"  [LLM] Attempt {attempt}/{max_retries}: malformed JSON — {e}")
-            if attempt < max_retries:
+            log.warning(f"  [LLM] Attempt {attempt}/{max_attempts}: malformed JSON — {e}")
+            if attempt < max_attempts:
                 # For JSON errors, slightly adjust temperature to get different output
                 payload["temperature"] = min(0.3, payload["temperature"] + 0.1)
         except http_requests.exceptions.HTTPError as e:
             last_error = e
             status_code = e.response.status_code if e.response is not None else 0
-            log.warning(f"  [LLM] Attempt {attempt}/{max_retries}: HTTP {status_code} — {e}")
+            log.warning(f"  [LLM] Attempt {attempt}/{max_attempts}: HTTP {status_code} — {e}")
             if status_code < 500 and status_code != 429:
                 raise  # Don't retry 4xx client errors (except 429 rate limit)
         except (http_requests.exceptions.ConnectionError,
                 http_requests.exceptions.Timeout,
                 http_requests.exceptions.ReadTimeout) as e:
             last_error = e
-            log.warning(f"  [LLM] Attempt {attempt}/{max_retries}: connection error — {e}")
+            log.warning(f"  [LLM] Attempt {attempt}/{max_attempts}: connection error — {e}")
         except Exception as e:
             last_error = e
-            log.warning(f"  [LLM] Attempt {attempt}/{max_retries}: unexpected error — {e}")
+            log.warning(f"  [LLM] Attempt {attempt}/{max_attempts}: unexpected error — {e}")
 
-        if attempt < max_retries:
+        if attempt < max_attempts:
             backoff = 2 ** attempt  # 2s, 4s, 8s
             log.info(f"  [LLM] Retrying in {backoff}s...")
             time.sleep(backoff)
 
     # All retries exhausted
     raise RuntimeError(
-        f"LLM çağrısı {max_retries} denemeden sonra başarısız oldu. "
+        f"LLM çağrısı {max_attempts} denemeden sonra başarısız oldu. "
         f"Son hata: {type(last_error).__name__}: {last_error}"
     )
 
@@ -4543,8 +4565,9 @@ def _sanitize_error(e) -> str:
     # Windows paths: C:\..., c:\..., \\server\share\...
     msg = re.sub(r'[A-Za-z]:[\\\/][^\s"\']*', '[path]', msg)
     msg = re.sub(r'\\\\[^\s"\']+', '[path]', msg)
-    # Unix paths containing sensitive directories
-    msg = re.sub(r'/[^\s"\']*(/data/|/models/|/temp/)[^\s"\']*', '[path]', msg)
+    # Unix paths: home directories, lib paths, and sensitive directories
+    msg = re.sub(r'/(?:home|root|Users|opt|usr|var|tmp)/[^\s"\']*', '[path]', msg)
+    msg = re.sub(r'/[^\s"\']*(/data/|/models/|/temp/|/site-packages/)[^\s"\']*', '[path]', msg)
     if len(msg) > 300:
         msg = msg[:300] + '…'
     return msg
@@ -4712,10 +4735,10 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         if origin:
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-        if origin and self._cors_allowed:
-            self.send_header("Access-Control-Allow-Credentials", "true")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+            if self._cors_allowed and self._cors_allowed != "*":
+                self.send_header("Access-Control-Allow-Credentials", "true")
         self.end_headers()
 
     def _parse_json_body(self, body: bytes):
@@ -4965,8 +4988,9 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             _login_limiter.record_attempt(f"ip:{client_ip}")
             return self.send_json({"error": "Kullanıcı adı veya şifre hatalı"}, 401)
 
-        # Successful login — reset rate limiter
+        # Successful login — reset both per-user and per-IP rate limiters
         _login_limiter.reset(rate_key)
+        _login_limiter.reset(f"ip:{client_ip}")
 
         token = create_session(username)
         self.send_response(200)
@@ -5051,13 +5075,13 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         if role not in ("user", "admin"):
             return self.send_json({"error": "Geçersiz rol"}, 400)
 
-        # Atomic check-and-create to prevent duplicate usernames
+        # Atomic check-and-create — single load to avoid TOCTOU
         with _file_locks["users"]:
-            if find_user(username):
+            users = _safe_read_json(USERS_FILE, default=[])
+            if any(u["username"].lower() == username.lower() for u in users):
                 return self.send_json({"error": "Bu kullanıcı adı zaten kullanılıyor"}, 400)
 
             pwd_hash, salt = _hash_password(password)
-            users = load_users()
             # SECURITY: display_name and email are immutable — no user-facing endpoint should modify them
             users.append({
                 "username": username,
@@ -5112,10 +5136,10 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             return self.send_json({"error": pwd_error}, 400)
 
         with _file_locks["users"]:
-            if find_user(username):
+            users = _safe_read_json(USERS_FILE, default=[])
+            if any(u["username"].lower() == username.lower() for u in users):
                 return self.send_json({"error": "Bu kullanıcı adı zaten kullanılıyor"}, 400)
             # Check email uniqueness
-            users = load_users()
             if any(u.get("email", "").lower() == email for u in users):
                 return self.send_json({"error": "Bu e-posta adresi zaten kayıtlı"}, 400)
 
@@ -5517,10 +5541,12 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
 
                 _, cleaning_report = clean_dataframe(df_sample.copy(), context="preview")
 
-                # Count total rows for limit check
+                # Count total rows for limit check (use csv.reader to handle quoted newlines)
                 try:
-                    with open(str(csv_path), 'r', encoding='utf-8', errors='replace') as f:
-                        total_rows = max(0, sum(1 for _ in f) - 1)  # subtract header
+                    import csv as _csv_mod
+                    with open(str(csv_path), 'r', encoding='utf-8', errors='replace', newline='') as f:
+                        reader = _csv_mod.reader(f)
+                        total_rows = max(0, sum(1 for _ in reader) - 1)  # subtract header
                 except Exception:
                     total_rows = 0
                 if total_rows > MAX_BATCH_ROWS:
@@ -7791,7 +7817,7 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         body_after_first = body[start_idx + len(first_boundary):]
         sections = body_after_first.split(delimiter)
 
-        for section in sections:
+        for idx, section in enumerate(sections):
             if b"Content-Disposition" not in section:
                 continue
             # Strip leading CRLF from section
@@ -7805,11 +7831,12 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             # Remove trailing CRLF (part of the delimiter, not the content)
             if content.endswith(b"\r\n"):
                 content = content[:-2]
-            # Remove closing boundary marker "--" only from the very last section
-            if content.endswith(b"--\r\n"):
-                content = content[:-4]
-            elif content.endswith(b"--"):
-                content = content[:-2]
+            # Remove closing boundary marker "--" only from the LAST section
+            if idx == len(sections) - 1:
+                if content.endswith(b"--\r\n"):
+                    content = content[:-4]
+                elif content.endswith(b"--"):
+                    content = content[:-2]
 
             name_match = re.search(r'name="([^"]+)"', header_part)
             filename_match = re.search(r'filename="([^"]+)"', header_part)
@@ -7831,7 +7858,7 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         boundary_bytes = boundary.encode()
         sections = body.split(b"--" + boundary_bytes)
 
-        for section in sections:
+        for idx, section in enumerate(sections):
             if b"Content-Disposition" not in section:
                 continue
             header_end = section.find(b"\r\n\r\n")
@@ -7839,12 +7866,15 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                 continue
             header_part = section[:header_end].decode("utf-8", errors="replace")
             content = section[header_end + 4:]
+            # Strip trailing CRLF (delimiter artifact, not content)
             if content.endswith(b"\r\n"):
                 content = content[:-2]
-            if content.endswith(b"--"):
-                content = content[:-2]
-            if content.endswith(b"\r\n"):
-                content = content[:-2]
+            # Only strip closing boundary marker "--" from the LAST section
+            if idx == len(sections) - 1:
+                if content.endswith(b"--"):
+                    content = content[:-2]
+                if content.endswith(b"\r\n"):
+                    content = content[:-2]
 
             name_match = re.search(r'name="([^"]+)"', header_part)
             filename_match = re.search(r'filename="([^"]*)"', header_part)

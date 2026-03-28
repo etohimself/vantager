@@ -270,7 +270,7 @@
             .replace(/## ([^\n]+)/g, '<h4 class="font-bold text-slate-700 mt-4 mb-1">$1</h4>')
             .replace(/# ([^\n]+)/g, '<h4 class="font-bold text-slate-700 mt-4 mb-2">$1</h4>')
             .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-            .replace(/^  - (.+)$/gm, '<div class="ml-4 flex gap-1.5"><span class="text-slate-400">\u2022</span><span>$1</span></div>')
+            .replace(/^[ \t]*- (.+)$/gm, '<div class="ml-4 flex gap-1.5"><span class="text-slate-400">\u2022</span><span>$1</span></div>')
             .replace(/\n\n/g, '<br><br>')
             .replace(/\n/g, '<br>');
     }
@@ -614,11 +614,11 @@
             <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
                 <div class="stat-card">
                     <div class="text-slate-500 text-xs font-medium mb-1">Toplam Analiz</div>
-                    <div class="text-3xl font-bold text-slate-800">${data.total_models}</div>
+                    <div class="text-3xl font-bold text-slate-800">${esc(data.total_models)}</div>
                 </div>
                 <div class="stat-card">
                     <div class="text-slate-500 text-xs font-medium mb-1">Benim Analizlerim</div>
-                    <div class="text-3xl font-bold text-slate-800">${data.my_model_count}</div>
+                    <div class="text-3xl font-bold text-slate-800">${esc(data.my_model_count)}</div>
                 </div>
                 <div class="stat-card">
                     <div class="text-slate-500 text-xs font-medium mb-1">${data.best_model && data.best_model.task_type === 'timeseries' ? 'En \u0130yi MASE' : 'En Ba\u015far\u0131l\u0131 Sonu\u00e7'}</div>
@@ -1314,7 +1314,9 @@
     }
 
     function handleAudioFileSelect(input) {
-        const files = Array.from(input.files);
+        const files = Array.from(input.files).filter(f =>
+            /\.(wav|mp3|m4a|ogg|flac|webm)$/i.test(f.name)
+        );
         addAudioFiles(files);
         input.value = '';
     }
@@ -2400,7 +2402,17 @@
         try {
             // Read CSV as text, parse to rows, send as JSON history
             const text = await file.text();
-            const lines = text.trim().split('\n');
+            // Split CSV respecting quoted newlines
+            const lines = [];
+            let cur = '', inQ = false;
+            for (let ci = 0; ci < text.length; ci++) {
+                const c = text[ci];
+                if (inQ) { cur += c; if (c === '"') inQ = false; }
+                else if (c === '"') { cur += c; inQ = true; }
+                else if (c === '\n') { lines.push(cur.replace(/\r$/, '')); cur = ''; }
+                else { cur += c; }
+            }
+            if (cur.trim()) lines.push(cur.replace(/\r$/, ''));
             if (lines.length < 2) {
                 contentDiv.innerHTML = '<p class="text-danger-500">CSV en az 1 ba\u015fl\u0131k ve 1 veri sat\u0131r\u0131 i\u00e7ermelidir.</p>';
                 return;
