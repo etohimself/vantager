@@ -55,6 +55,7 @@ Each entry should be a concise one-liner describing what to skip and why.
 - Unquoted HTML class attribute in renderCallAnalysisResults (valid HTML, no spaces in class name)
 - Feature input element ID collision on similar column names (values collected via data-feature attribute, not getElementById)
 - Bare torch reference in OOM error handler (NameError caught by except Exception: pass, no crash)
+- Password change reports success if user deleted concurrently (impossible race, self-harm only)
 
 ## Already Fixed
 - Zip extraction path traversal (added member path validation)
@@ -94,3 +95,7 @@ Each entry should be a concise one-liner describing what to skip and why.
 - Path traversal startswith check missing trailing os.sep in tar/zip extraction (added os.sep)
 - Static file serving startswith check missing trailing os.sep (added os.sep)
 - MSSQL export filename not sanitized for filesystem-unsafe chars (added regex sanitization)
+- Airflow DAG text embedding code gated on TASK_TYPE=="text" which is never set (changed to TEXT_COLUMNS)
+- Missing CORS credentials+expose headers on Airflow ZIP export responses (added matching send_file_download pattern)
+- Missing target column validation in single timeseries prediction (added column check)
+- Airflow ZIP export not protected by model_ref_counter (added acquire/release)

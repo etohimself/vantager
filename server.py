@@ -3075,10 +3075,9 @@ def generate_airflow_dag(model_id: str, model_name: str, submodel_name: str,
     embedding_imports = ""
     embedding_constants = ""
     embedding_function = ""
-    if task_type == "text" and text_columns:
+    if text_columns:
         embedding_imports = "\nfrom sentence_transformers import SentenceTransformer"
         embedding_constants = f"""
-TEXT_COLUMNS = {json.dumps(text_columns)}
 EMBEDDING_MODEL = {json.dumps(embedding_model or DEFAULT_EMBEDDING_MODEL)}
 """
         embedding_function = """
@@ -3120,7 +3119,7 @@ Hedef: {target_col}
 Kurulum:
 1. Bu dosyayı Airflow DAGs klasörüne kopyalayın (~airflow/dags/)
 2. AutoGluon kurulu olduğundan emin olun: pip install autogluon.tabular
-{('3. sentence-transformers kurulu olduğundan emin olun: pip install sentence-transformers' + chr(10)) if task_type == 'text' else ''}3. Model dizinini aşağıdaki MODEL_PATH konumuna kopyalayın
+{('3. sentence-transformers kurulu olduğundan emin olun: pip install sentence-transformers' + chr(10)) if text_columns else ''}3. Model dizinini aşağıdaki MODEL_PATH konumuna kopyalayın
 4. INPUT_CSV_PATH ve OUTPUT_CSV_PATH ayarlayın
 """
 
@@ -3142,6 +3141,7 @@ SUBMODEL_NAME = {json.dumps(submodel_name)}
 TARGET_COLUMN = {json.dumps(target_col)}
 TASK_TYPE = {json.dumps(task_type)}
 FEATURE_COLUMNS = {json.dumps(feature_columns)}
+TEXT_COLUMNS = {json.dumps(text_columns)}
 {embedding_constants}
 default_args = {{
     "owner": "tahmin-platformu",
@@ -3218,7 +3218,7 @@ def load_and_predict(**kwargs):
     # Keep human-readable copy before embedding
     original_input_df = input_df.copy()
     # NaN-safe: text/object sutunlardaki NaN degerleri bos string ile doldur
-    if TASK_TYPE == "text":
+    if TEXT_COLUMNS:
         str_cols = input_df.select_dtypes(include=["object"]).columns
         for col in str_cols:
             input_df[col] = input_df[col].fillna("")
@@ -3227,11 +3227,11 @@ def load_and_predict(**kwargs):
         if text_cols_present:
             input_df = embed_text_columns(input_df, text_cols_present)
     predictions = predictor.predict(input_df, model=SUBMODEL_NAME)
-    output_df = original_input_df.copy() if TASK_TYPE == "text" else input_df.copy()
+    output_df = original_input_df.copy() if TEXT_COLUMNS else input_df.copy()
     output_df[f"{{TARGET_COLUMN}}_predicted"] = predictions
-    null_feature_mask = original_input_df[FEATURE_COLUMNS].isna().any(axis=1) if TASK_TYPE == "text" else input_df[FEATURE_COLUMNS].isna().any(axis=1)
+    null_feature_mask = original_input_df[FEATURE_COLUMNS].isna().any(axis=1) if TEXT_COLUMNS else input_df[FEATURE_COLUMNS].isna().any(axis=1)
     output_df[f"{{TARGET_COLUMN}}_has_null_features"] = null_feature_mask.astype(int)
-    if TASK_TYPE in ("classification", "text"):
+    if TASK_TYPE == "classification":
         try:
             proba = predictor.predict_proba(input_df, model=SUBMODEL_NAME)
             for col in proba.columns:
@@ -5939,6 +5939,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                 hist_df = pd.DataFrame(history_rows)
                 if ts_col not in hist_df.columns:
                     return self.send_json({"error": f"Zaman damgası sütunu '{ts_col}' gönderilen veride bulunamadı"}, 400)
+                if target_col not in hist_df.columns:
+                    return self.send_json({"error": f"Hedef sütun '{target_col}' gönderilen veride bulunamadı"}, 400)
                 try:
                     hist_df[ts_col] = pd.to_datetime(hist_df[ts_col])
                 except (ValueError, TypeError) as e:
@@ -6339,11 +6341,15 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         if not any(sm["name"] == submodel_name for sm in meta.get("submodels", [])):
             return self.send_json({"error": f"Alt model bulunamadı: {submodel_name}"}, 404)
 
+        if not model_ref_counter.acquire(model_id):
+            return self.send_json({"error": "Model siliniyor, lütfen bekleyin"}, 409)
         try:
             return self._do_export_airflow(model_id, submodel_name, meta, user)
         except Exception as e:
             traceback.print_exc()
             self._safe_send_error(500, f"Dışa aktarma hatası: {self._safe_error_message(e)}")
+        finally:
+            model_ref_counter.release(model_id)
 
     def _do_export_airflow(self, model_id, submodel_name, meta, user):
         import zipfile
@@ -6422,6 +6428,9 @@ CSV dosyası en az şu sütunları içermelidir:
             if origin:
                 self.send_header("Access-Control-Allow-Origin", origin)
                 self.send_header("Vary", "Origin")
+                if self._cors_allowed and self._cors_allowed != "*":
+                    self.send_header("Access-Control-Allow-Credentials", "true")
+            self.send_header("Access-Control-Expose-Headers", "Content-Disposition")
             self.end_headers()
             self.wfile.write(zip_bytes)
             return
@@ -6498,6 +6507,9 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         if origin:
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
+            if self._cors_allowed and self._cors_allowed != "*":
+                self.send_header("Access-Control-Allow-Credentials", "true")
+        self.send_header("Access-Control-Expose-Headers", "Content-Disposition")
         self.end_headers()
         self.wfile.write(zip_bytes)
 
