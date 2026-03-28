@@ -82,8 +82,10 @@ class NaNSafeEncoder(json.JSONEncoder):
         return super().iterencode(sanitize_value(obj), _one_shot=_one_shot)
 
 
-def sanitize_value(obj):
+def sanitize_value(obj, _depth=0):
     """Recursively replace NaN, Infinity, -Infinity with None."""
+    if _depth > 100:
+        return None  # Prevent stack overflow on deeply nested / circular structures
     if obj is None:
         return None
     if isinstance(obj, float):
@@ -101,7 +103,7 @@ def sanitize_value(obj):
         if isinstance(obj, (np.bool_,)):
             return bool(obj)
         if isinstance(obj, (np.ndarray,)):
-            return [sanitize_value(x) for x in obj.tolist()]
+            return [sanitize_value(x, _depth + 1) for x in obj.tolist()]
         if isinstance(obj, (np.void,)):
             return None
     except ImportError:
@@ -113,9 +115,9 @@ def sanitize_value(obj):
     except (ImportError, TypeError, ValueError):
         pass
     if isinstance(obj, dict):
-        return {k: sanitize_value(v) for k, v in obj.items()}
+        return {k: sanitize_value(v, _depth + 1) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
-        return [sanitize_value(x) for x in obj]
+        return [sanitize_value(x, _depth + 1) for x in obj]
     return obj
 
 
@@ -159,12 +161,18 @@ def clean_dataframe(df, context="training", timestamp_column=None):
 
         # Forward-fill then backward-fill to maintain sequence integrity
         nan_before = df.isna().sum().sum()
+        total_cells = df.shape[0] * df.shape[1]
         df = df.ffill().bfill()
         nan_after = df.isna().sum().sum()
         filled_count = nan_before - nan_after
         if filled_count > 0:
+            fill_ratio = filled_count / max(total_cells, 1)
             report["issues_found"].append(f"Toplam {filled_count} eksik değer bulundu")
             report["actions_taken"].append(f"{filled_count} eksik değer ileri/geri doldurma ile tamamlandı")
+            if fill_ratio > 0.3:
+                report["issues_found"].append(
+                    f"⚠ Yüksek eksik değer oranı: {fill_ratio:.0%} — model kalitesi düşük olabilir"
+                )
 
         # Strip strings
         str_cols = df.select_dtypes(include=['object']).columns
@@ -468,7 +476,7 @@ except ImportError:
 
 # Global sentence-transformer model cache (loaded once, reused across trainings)
 _sentence_model_cache = {}  # {model_name: {"model": SentenceTransformer, "last_used": float, "measured_vram_mb": int}}
-_sentence_model_lock = threading.Lock()
+_sentence_model_lock = threading.Condition(threading.Lock())
 
 # Prediction concurrency limiter (Solution 6: prevent concurrent VRAM explosion)
 _prediction_semaphore = threading.Semaphore(3)  # Max 3 concurrent predictions
@@ -490,14 +498,14 @@ def _get_sentence_model(model_name: str = None):
         # Prevent double-load: wait if another thread is already loading this model
         _wait_start = time.time()
         while model_name in _sentence_model_loading:
-            _sentence_model_lock.release()
-            time.sleep(0.5)
-            _sentence_model_lock.acquire()
+            # Condition.wait() atomically releases and re-acquires the lock
+            remaining = 120 - (time.time() - _wait_start)
+            if remaining <= 0:
+                raise RuntimeError(f"Embedding model '{model_name}' yükleme zaman aşımı (120s)")
+            _sentence_model_lock.wait(timeout=min(remaining, 0.5))
             if model_name in _sentence_model_cache:
                 _sentence_model_cache[model_name]["last_used"] = time.time()
                 return _sentence_model_cache[model_name]["model"]
-            if time.time() - _wait_start > 120:
-                raise RuntimeError(f"Embedding model '{model_name}' yükleme zaman aşımı (120s)")
         _sentence_model_loading.add(model_name)
     # Load outside lock to avoid blocking other threads
     try:
@@ -513,11 +521,13 @@ def _get_sentence_model(model_name: str = None):
                 "measured_vram_mb": _emb_measured,
             }
             _sentence_model_loading.discard(model_name)
+            _sentence_model_lock.notify_all()
         print(f"[Embedding] Model loaded: {model_name} (dim={model.get_sentence_embedding_dimension()}, VRAM: {_emb_measured}MB)")
         return model
     except Exception:
         with _sentence_model_lock:
             _sentence_model_loading.discard(model_name)
+            _sentence_model_lock.notify_all()
         raise
 
 
@@ -1416,6 +1426,19 @@ def destroy_session(token: str):
         _atomic_write_json(SESSIONS_FILE, sessions)
 
 
+def destroy_user_sessions(username: str, except_token: str = None):
+    """Remove all sessions for a user, optionally keeping one token (e.g. current session)."""
+    with _file_locks["sessions"]:
+        sessions = _safe_read_json(SESSIONS_FILE, default={})
+        to_remove = [t for t, v in sessions.items()
+                     if v.get("username") == username and t != except_token]
+        for t in to_remove:
+            del sessions[t]
+        if to_remove:
+            _atomic_write_json(SESSIONS_FILE, sessions)
+            log.info(f"[Auth] Destroyed {len(to_remove)} session(s) for user '{username}'")
+
+
 def init_master_admin():
     """Create master admin if no users exist.
     Reads ADMIN_USER and ADMIN_PASSWORD from environment.
@@ -1725,6 +1748,11 @@ def _download_llama_server():
     log.info("[LLM] Extracting...")
     if asset_name.endswith(".tar.gz"):
         with tarfile.open(str(archive_path), "r:gz") as tf:
+            # Validate tar members to prevent path traversal
+            for member in tf.getmembers():
+                member_path = os.path.normpath(os.path.join(str(extract_dir), member.name))
+                if not member_path.startswith(str(extract_dir)):
+                    raise ValueError(f"Tar member '{member.name}' would extract outside target directory")
             tf.extractall(str(extract_dir))
     else:
         with zipfile.ZipFile(str(archive_path), "r") as zf:
@@ -1973,12 +2001,13 @@ _training_pool = ThreadPoolExecutor(max_workers=1)
 
 class FairJobQueue:
     """Fair job queue with position tracking. Round-robin across users."""
-    def __init__(self, pool, job_store):
+    def __init__(self, pool, job_store, running_status="training"):
         self._lock = threading.RLock()
         self._queue = []  # [(username, job_id, submit_time, callable, args, kwargs)]
         self._pool = pool
         self._job_store = job_store
         self._running = None  # (username, job_id) or None
+        self._running_status = running_status
 
     def submit(self, username, job_id, fn, *args, **kwargs):
         """Enqueue a job. Returns queue position (0 = will run next)."""
@@ -2006,7 +2035,7 @@ class FairJobQueue:
         # Pick next job (FIFO — round-robin not needed with 1-per-user limit)
         username, job_id, _, fn, args, kwargs = self._queue.pop(0)
         self._running = (username, job_id)
-        self._job_store.update_fields(job_id, status="training")
+        self._job_store.update_fields(job_id, status=self._running_status)
 
         def _wrapper():
             try:
@@ -2026,8 +2055,8 @@ class FairJobQueue:
             return len(self._queue)
 
 
-_training_queue = FairJobQueue(_training_pool, training_jobs)
-_audio_eval_queue = FairJobQueue(_audio_eval_pool, audio_eval_jobs)
+_training_queue = FairJobQueue(_training_pool, training_jobs, running_status="training")
+_audio_eval_queue = FairJobQueue(_audio_eval_pool, audio_eval_jobs, running_status="processing")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -4618,9 +4647,9 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                 return False
         return True
 
-    # Allowed CORS origins: comma-separated list, or "*" to reflect any origin.
+    # Allowed CORS origins: comma-separated list.
     # Set via env: CORS_ORIGINS="https://myapp.com,https://admin.myapp.com"
-    # Default: reflect any origin (safe when behind nginx that only exposes the app).
+    # Default: no CORS (same-origin only). Set CORS_ORIGINS="*" to allow all (not recommended).
     _cors_allowed = os.environ.get("CORS_ORIGINS", "").strip()
 
     def _cors_origin(self):
@@ -4629,7 +4658,9 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         if not origin:
             return None
         if not self._cors_allowed:
-            return origin  # No restriction configured — reflect back
+            return None  # No CORS configured — same-origin only
+        if self._cors_allowed == "*":
+            return origin  # Wildcard — reflect any origin (no credentials)
         allowed = [o.strip() for o in self._cors_allowed.split(",")]
         if origin in allowed:
             return origin
@@ -4645,7 +4676,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             if origin:
                 self.send_header("Access-Control-Allow-Origin", origin)
                 self.send_header("Vary", "Origin")
-                if self._cors_allowed:
+                if self._cors_allowed and self._cors_allowed != "*":
                     self.send_header("Access-Control-Allow-Credentials", "true")
             self.end_headers()
             self.wfile.write(body)
@@ -4667,7 +4698,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             if origin:
                 self.send_header("Access-Control-Allow-Origin", origin)
                 self.send_header("Vary", "Origin")
-                if self._cors_allowed:
+                if self._cors_allowed and self._cors_allowed != "*":
                     self.send_header("Access-Control-Allow-Credentials", "true")
             self.send_header("Access-Control-Expose-Headers", "Content-Disposition")
             self.end_headers()
@@ -4742,48 +4773,38 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         elif path == "/api/users":
             return self.handle_list_users()
 
-        elif re.match(r"^/api/models/([a-f0-9-]+)$", path):
-            model_id = re.match(r"^/api/models/([a-f0-9-]+)$", path).group(1)
-            return self.handle_get_model(model_id)
+        elif (m := re.match(r"^/api/models/([a-f0-9-]+)$", path)):
+            return self.handle_get_model(m.group(1))
 
-        elif re.match(r"^/api/models/([a-f0-9-]+)/export/([^/]+)/airflow$", path):
-            m = re.match(r"^/api/models/([a-f0-9-]+)/export/([^/]+)/airflow$", path)
+        elif (m := re.match(r"^/api/models/([a-f0-9-]+)/export/([^/]+)/airflow$", path)):
             return self.handle_export_airflow(m.group(1), unquote(m.group(2)))
 
-        elif re.match(r"^/api/models/([a-f0-9-]+)/export/([^/]+)/mssql$", path):
-            m = re.match(r"^/api/models/([a-f0-9-]+)/export/([^/]+)/mssql$", path)
+        elif (m := re.match(r"^/api/models/([a-f0-9-]+)/export/([^/]+)/mssql$", path)):
             return self.handle_export_mssql(m.group(1), unquote(m.group(2)))
 
-        elif re.match(r"^/api/models/([a-f0-9-]+)/columns$", path):
-            model_id = re.match(r"^/api/models/([a-f0-9-]+)/columns$", path).group(1)
-            return self.handle_get_columns(model_id)
+        elif (m := re.match(r"^/api/models/([a-f0-9-]+)/columns$", path)):
+            return self.handle_get_columns(m.group(1))
 
-        elif re.match(r"^/api/models/([a-f0-9-]+)/explain/([^/]+)$", path):
-            m = re.match(r"^/api/models/([a-f0-9-]+)/explain/([^/]+)$", path)
+        elif (m := re.match(r"^/api/models/([a-f0-9-]+)/explain/([^/]+)$", path)):
             return self.handle_explain(m.group(1), unquote(m.group(2)))
 
-        elif re.match(r"^/api/training/([a-f0-9-]+)/status$", path):
-            job_id = re.match(r"^/api/training/([a-f0-9-]+)/status$", path).group(1)
-            return self.handle_training_status(job_id)
+        elif (m := re.match(r"^/api/training/([a-f0-9-]+)/status$", path)):
+            return self.handle_training_status(m.group(1))
 
         elif path == "/api/audio-evaluate/active":
             return self.handle_active_audio_eval()
 
-        elif re.match(r"^/api/audio-evaluate/([a-f0-9-]+)/status$", path):
-            job_id = re.match(r"^/api/audio-evaluate/([a-f0-9-]+)/status$", path).group(1)
-            return self.handle_audio_eval_status(job_id)
+        elif (m := re.match(r"^/api/audio-evaluate/([a-f0-9-]+)/status$", path)):
+            return self.handle_audio_eval_status(m.group(1))
 
-        elif re.match(r"^/api/audio-predict/([a-f0-9-]+)/status$", path):
-            job_id = re.match(r"^/api/audio-predict/([a-f0-9-]+)/status$", path).group(1)
-            return self.handle_audio_predict_status(job_id)
+        elif (m := re.match(r"^/api/audio-predict/([a-f0-9-]+)/status$", path)):
+            return self.handle_audio_predict_status(m.group(1))
 
-        elif re.match(r"^/api/audio-predict/([a-f0-9-]+)/download-csv$", path):
-            job_id = re.match(r"^/api/audio-predict/([a-f0-9-]+)/download-csv$", path).group(1)
-            return self.handle_audio_predict_download(job_id)
+        elif (m := re.match(r"^/api/audio-predict/([a-f0-9-]+)/download-csv$", path)):
+            return self.handle_audio_predict_download(m.group(1))
 
-        elif re.match(r"^/api/models/([a-f0-9-]+)/call-analysis/download-csv$", path):
-            model_id = re.match(r"^/api/models/([a-f0-9-]+)/call-analysis/download-csv$", path).group(1)
-            return self.handle_call_analysis_download(model_id)
+        elif (m := re.match(r"^/api/models/([a-f0-9-]+)/call-analysis/download-csv$", path)):
+            return self.handle_call_analysis_download(m.group(1))
 
         elif path == "/api/admin/pending-users":
             return self.handle_pending_users()
@@ -4829,6 +4850,12 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         if path not in _AUTH_ROUTES and content_length > 1024 * 1024:  # >1MB needs auth first
             user = self._get_current_user()
             if not user:
+                # Consume and discard the body to prevent HTTP/1.1 connection desync
+                if content_length > 0:
+                    try:
+                        self.rfile.read(content_length)
+                    except Exception:
+                        pass
                 self.send_json({"error": "Oturum açmanız gerekiyor"}, 401)
                 return
 
@@ -4860,32 +4887,26 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         elif path == "/api/audio-evaluate":
             return self.handle_audio_evaluate(body)
 
-        elif re.match(r"^/api/models/([a-f0-9-]+)/predict-audio$", path):
-            model_id = re.match(r"^/api/models/([a-f0-9-]+)/predict-audio$", path).group(1)
-            return self.handle_audio_predict(model_id, body)
+        elif (m := re.match(r"^/api/models/([a-f0-9-]+)/predict-audio$", path)):
+            return self.handle_audio_predict(m.group(1), body)
 
-        elif re.match(r"^/api/models/([a-f0-9-]+)/predict/([^/]+)$", path):
-            m = re.match(r"^/api/models/([a-f0-9-]+)/predict/([^/]+)$", path)
+        elif (m := re.match(r"^/api/models/([a-f0-9-]+)/predict/([^/]+)$", path)):
             return self.handle_predict(m.group(1), unquote(m.group(2)), body)
 
-        elif re.match(r"^/api/models/([a-f0-9-]+)/predict-batch/([^/]+)$", path):
-            m = re.match(r"^/api/models/([a-f0-9-]+)/predict-batch/([^/]+)$", path)
+        elif (m := re.match(r"^/api/models/([a-f0-9-]+)/predict-batch/([^/]+)$", path)):
             return self.handle_predict_batch(m.group(1), unquote(m.group(2)), body)
 
         elif path == "/api/cost-estimate":
             return self.handle_cost_estimate(body)
 
-        elif re.match(r"^/api/models/([a-f0-9-]+)/delete$", path):
-            model_id = re.match(r"^/api/models/([a-f0-9-]+)/delete$", path).group(1)
-            return self.handle_delete_model(model_id)
+        elif (m := re.match(r"^/api/models/([a-f0-9-]+)/delete$", path)):
+            return self.handle_delete_model(m.group(1))
 
-        elif re.match(r"^/api/models/([a-f0-9-]+)/visibility$", path):
-            model_id = re.match(r"^/api/models/([a-f0-9-]+)/visibility$", path).group(1)
-            return self.handle_set_visibility(model_id, body)
+        elif (m := re.match(r"^/api/models/([a-f0-9-]+)/visibility$", path)):
+            return self.handle_set_visibility(m.group(1), body)
 
-        elif re.match(r"^/api/models/([a-f0-9-]+)/endorse$", path):
-            model_id = re.match(r"^/api/models/([a-f0-9-]+)/endorse$", path).group(1)
-            return self.handle_endorse(model_id, body)
+        elif (m := re.match(r"^/api/models/([a-f0-9-]+)/endorse$", path)):
+            return self.handle_endorse(m.group(1), body)
 
         elif path == "/api/users/update-role":
             return self.handle_update_role(body)
@@ -4915,7 +4936,14 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             return self.send_json({"error": "Kullanıcı adı ve şifre gerekli"}, 400)
 
         # Rate limiting: tiered blocking after repeated failed attempts
-        rate_key = username.lower()
+        # Key on both IP and username to prevent distributed brute-force
+        client_ip = self._get_client_ip()
+        rate_key = f"{client_ip}:{username.lower()}"
+        # Also check per-IP limit (blocks all login attempts from one IP)
+        ip_blocked, ip_retry = _login_limiter.is_blocked(f"ip:{client_ip}")
+        if ip_blocked:
+            minutes = math.ceil(ip_retry / 60)
+            return self.send_json({"error": f"Çok fazla başarısız giriş denemesi. {minutes} dakika sonra tekrar deneyin."}, 429)
         blocked, retry_after = _login_limiter.is_blocked(rate_key)
         if blocked:
             minutes = math.ceil(retry_after / 60)
@@ -4924,6 +4952,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         user = find_user(username)
         if not user:
             _login_limiter.record_attempt(rate_key)
+            _login_limiter.record_attempt(f"ip:{client_ip}")
             return self.send_json({"error": "Kullanıcı adı veya şifre hatalı"}, 401)
 
         if user.get("status") == "pending":
@@ -4933,6 +4962,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
 
         if not _verify_password(password, user["password_hash"], user["salt"]):
             _login_limiter.record_attempt(rate_key)
+            _login_limiter.record_attempt(f"ip:{client_ip}")
             return self.send_json({"error": "Kullanıcı adı veya şifre hatalı"}, 401)
 
         # Successful login — reset rate limiter
@@ -5143,6 +5173,9 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                     u["salt"] = new_salt
                     break
             save_users(users)
+        # Invalidate all other sessions for this user (keep current session)
+        current_token = self._get_auth_token()
+        destroy_user_sessions(user["username"], except_token=current_token)
         self.send_json({"success": True, "message": "Şifre başarıyla değiştirildi"})
 
     def handle_list_users(self):
@@ -7906,7 +7939,7 @@ def main():
             if self._thread_semaphore.acquire(blocking=False):
                 try:
                     super().process_request(request, client_address)
-                except Exception:
+                except BaseException:
                     self._thread_semaphore.release()
                     raise
             else:
