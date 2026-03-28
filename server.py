@@ -126,6 +126,21 @@ def safe_json_dumps(data, **kwargs):
     return json.dumps(sanitize_value(data), cls=NaNSafeEncoder, default=str, **kwargs)
 
 
+def _read_csv_with_fallback(csv_path, **kwargs):
+    """Read CSV with encoding fallback: try utf-8-sig first, then detect encoding."""
+    try:
+        return pd.read_csv(csv_path, encoding='utf-8-sig', **kwargs)
+    except UnicodeDecodeError:
+        # Try common Turkish/European encodings before giving up
+        for enc in ['windows-1254', 'latin-1', 'windows-1252']:
+            try:
+                return pd.read_csv(csv_path, encoding=enc, **kwargs)
+            except (UnicodeDecodeError, Exception):
+                continue
+        # Last resort: lossy read
+        return pd.read_csv(csv_path, encoding='utf-8', errors='replace', **kwargs)
+
+
 def clean_dataframe(df, context="training", timestamp_column=None):
     """Clean a DataFrame for ML processing."""
     import pandas as pd
@@ -162,6 +177,13 @@ def clean_dataframe(df, context="training", timestamp_column=None):
         # Forward-fill then backward-fill to maintain sequence integrity
         nan_before = df.isna().sum().sum()
         total_cells = df.shape[0] * df.shape[1]
+        # Reject datasets with >80% missing values — ffill would fabricate most of the data
+        pre_fill_ratio = nan_before / max(total_cells, 1)
+        if pre_fill_ratio > 0.8:
+            raise ValueError(
+                f"Veri setinde çok fazla eksik değer var ({pre_fill_ratio:.0%}). "
+                f"Zaman serisi analizi için daha yoğun veri gerekiyor."
+            )
         df = df.ffill().bfill()
         nan_after = df.isna().sum().sum()
         filled_count = nan_before - nan_after
@@ -480,6 +502,9 @@ _sentence_model_lock = threading.Condition(threading.Lock())
 
 # Prediction concurrency limiter (Solution 6: prevent concurrent VRAM explosion)
 _prediction_semaphore = threading.Semaphore(3)  # Max 3 concurrent predictions
+# Upload concurrency limiter — caps peak RAM from concurrent large body reads
+_upload_semaphore = threading.Semaphore(5)  # Max 5 concurrent large uploads (5 × 200MB = 1GB peak)
+_UPLOAD_SEMAPHORE_THRESHOLD = 10 * 1024 * 1024  # 10MB — only gate large bodies
 
 # Default embedding model: lightweight, fast, 384 dimensions, good multilingual support
 DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
@@ -678,10 +703,14 @@ _per_model_locks = {}
 _per_model_locks_guard = threading.Lock()
 
 def _get_model_lock(model_id: str) -> threading.RLock:
-    """Get or create a per-model RLock."""
+    """Get or create a per-model RLock. Returns a throwaway lock for non-existent models
+    to prevent unbounded dict growth from requests to invalid model IDs."""
     with _per_model_locks_guard:
-        if model_id not in _per_model_locks:
-            _per_model_locks[model_id] = threading.RLock()
+        if model_id in _per_model_locks:
+            return _per_model_locks[model_id]
+        if not (MODELS_DIR / model_id).is_dir():
+            return threading.RLock()  # throwaway, not cached
+        _per_model_locks[model_id] = threading.RLock()
         return _per_model_locks[model_id]
 
 
@@ -1340,103 +1369,156 @@ def find_user(username: str) -> dict:
     return None
 
 
+class _SessionStore:
+    """In-memory session store with periodic disk flush.
+    Eliminates per-request disk I/O for session validation."""
+    _FLUSH_INTERVAL = 30  # seconds between disk flushes
+    _MAX_SESSIONS_PER_USER = 5
+
+    def __init__(self):
+        self._lock = threading.RLock()
+        self._data = {}  # {token: {username, created_at, last_activity}}
+        self._dirty = False
+        self._loaded = False
+
+    def _ensure_loaded(self):
+        """Load sessions from disk on first access."""
+        if not self._loaded:
+            self._data = _safe_read_json(SESSIONS_FILE, default={})
+            self._loaded = True
+
+    def _flush_to_disk(self):
+        """Write current state to disk if changed."""
+        if self._dirty:
+            _atomic_write_json(SESSIONS_FILE, self._data)
+            self._dirty = False
+
+    def _clean_expired(self):
+        """Remove expired sessions from memory."""
+        now_dt = datetime.now()
+        to_remove = []
+        for token, v in self._data.items():
+            try:
+                created = datetime.fromisoformat(v.get("created_at", "")).replace(tzinfo=None)
+                if (now_dt - created).total_seconds() > SESSION_TTL_SECONDS:
+                    to_remove.append(token)
+            except (ValueError, TypeError, KeyError):
+                to_remove.append(token)
+        for t in to_remove:
+            del self._data[t]
+        if to_remove:
+            self._dirty = True
+
+    def create(self, username: str) -> str:
+        token = secrets.token_urlsafe(48)
+        now = datetime.now().isoformat()
+        with self._lock:
+            self._ensure_loaded()
+            self._clean_expired()
+            # Limit sessions per user
+            user_sessions = [(k, v) for k, v in self._data.items() if v.get("username") == username]
+            if len(user_sessions) >= self._MAX_SESSIONS_PER_USER:
+                user_sessions.sort(key=lambda x: x[1].get("created_at", ""))
+                for old_token, _ in user_sessions[:len(user_sessions) - self._MAX_SESSIONS_PER_USER + 1]:
+                    self._data.pop(old_token, None)
+            self._data[token] = {"username": username, "created_at": now, "last_activity": now}
+            self._dirty = True
+            self._flush_to_disk()  # flush immediately on create (new session must survive crash)
+        return token
+
+    def get_user(self, token: str) -> dict:
+        """Validate session and return user dict, or None."""
+        if not token:
+            return None
+        with self._lock:
+            self._ensure_loaded()
+            session = self._data.get(token)
+            if not session:
+                return None
+            try:
+                now_dt = datetime.now()
+                created = datetime.fromisoformat(session.get("created_at", "")).replace(tzinfo=None)
+                if (now_dt - created).total_seconds() > SESSION_TTL_SECONDS:
+                    del self._data[token]
+                    self._dirty = True
+                    return None
+                last_activity_str = session.get("last_activity", session.get("created_at", ""))
+                last_activity = datetime.fromisoformat(last_activity_str).replace(tzinfo=None)
+                idle_seconds = (now_dt - last_activity).total_seconds()
+                if idle_seconds > SESSION_IDLE_TIMEOUT:
+                    del self._data[token]
+                    self._dirty = True
+                    return None
+                if idle_seconds > 300:
+                    session["last_activity"] = now_dt.isoformat()
+                    self._dirty = True
+                username = session["username"]
+            except (ValueError, TypeError, KeyError):
+                self._data.pop(token, None)
+                self._dirty = True
+                return None
+        return find_user(username)
+
+    def destroy(self, token: str):
+        with self._lock:
+            self._ensure_loaded()
+            if self._data.pop(token, None) is not None:
+                self._dirty = True
+                self._flush_to_disk()
+
+    def destroy_user_sessions(self, username: str, except_token: str = None):
+        with self._lock:
+            self._ensure_loaded()
+            to_remove = [t for t, v in self._data.items()
+                         if v.get("username") == username and t != except_token]
+            for t in to_remove:
+                del self._data[t]
+            if to_remove:
+                self._dirty = True
+                self._flush_to_disk()
+                log.info(f"[Auth] Destroyed {len(to_remove)} session(s) for user '{username}'")
+
+    def periodic_flush(self):
+        """Background thread: flush dirty state to disk periodically."""
+        while True:
+            time.sleep(self._FLUSH_INTERVAL)
+            with self._lock:
+                self._flush_to_disk()
+
+
+_session_store = _SessionStore()
+threading.Thread(target=_session_store.periodic_flush, daemon=True, name="session-flusher").start()
+
+
 def load_sessions() -> dict:
-    """Load sessions (thread-safe)."""
-    with _file_locks["sessions"]:
-        return _safe_read_json(SESSIONS_FILE, default={})
+    """Load sessions (for compatibility)."""
+    with _session_store._lock:
+        _session_store._ensure_loaded()
+        return dict(_session_store._data)
 
 
 def save_sessions(sessions: dict):
-    """Save sessions (thread-safe, atomic write)."""
-    with _file_locks["sessions"]:
-        _atomic_write_json(SESSIONS_FILE, sessions)
+    """Save sessions (for compatibility)."""
+    with _session_store._lock:
+        _session_store._data = sessions
+        _session_store._dirty = True
+        _session_store._flush_to_disk()
 
 
 def create_session(username: str) -> str:
-    """Create a new session token for a user. Atomic read-modify-write."""
-    token = secrets.token_urlsafe(48)
-    with _file_locks["sessions"]:
-        sessions = _safe_read_json(SESSIONS_FILE, default={})
-        # Clean expired sessions (older than SESSION_TTL_SECONDS) — crash-proof
-        now_dt = datetime.now()
-        now = now_dt.isoformat()
-        clean = {}
-        for k, v in sessions.items():
-            try:
-                created = datetime.fromisoformat(v.get("created_at", ""))
-                if (now_dt - created).total_seconds() < SESSION_TTL_SECONDS:
-                    clean[k] = v
-            except (ValueError, TypeError, KeyError):
-                pass  # Drop corrupt sessions silently
-        # Limit sessions per user
-        MAX_SESSIONS_PER_USER = 5
-        user_sessions = [(k, v) for k, v in clean.items() if v.get("username") == username]
-        if len(user_sessions) >= MAX_SESSIONS_PER_USER:
-            user_sessions.sort(key=lambda x: x[1].get("created_at", ""))
-            for old_token, _ in user_sessions[:len(user_sessions) - MAX_SESSIONS_PER_USER + 1]:
-                del clean[old_token]
-        clean[token] = {"username": username, "created_at": now, "last_activity": now}
-        _atomic_write_json(SESSIONS_FILE, clean)
-    return token
+    return _session_store.create(username)
 
 
 def get_session_user(token: str) -> dict:
-    """Get user from session token. Returns user dict or None.
-    Atomic: if session is expired, removes it in a single locked cycle."""
-    if not token:
-        return None
-    with _file_locks["sessions"]:
-        sessions = _safe_read_json(SESSIONS_FILE, default={})
-        session = sessions.get(token)
-        if not session:
-            return None
-        # Check absolute expiry (SESSION_TTL_SECONDS)
-        try:
-            now_dt = datetime.now()
-            created = datetime.fromisoformat(session.get("created_at", "")).replace(tzinfo=None)
-            if (now_dt - created).total_seconds() > SESSION_TTL_SECONDS:
-                del sessions[token]
-                _atomic_write_json(SESSIONS_FILE, sessions)
-                return None
-            # Check idle timeout (SESSION_IDLE_TIMEOUT)
-            last_activity_str = session.get("last_activity", session.get("created_at", ""))
-            last_activity = datetime.fromisoformat(last_activity_str).replace(tzinfo=None)
-            idle_seconds = (now_dt - last_activity).total_seconds()
-            if idle_seconds > SESSION_IDLE_TIMEOUT:
-                del sessions[token]
-                _atomic_write_json(SESSIONS_FILE, sessions)
-                return None
-            # Update last_activity but only if more than 300s have elapsed (reduce disk I/O)
-            if idle_seconds > 300:
-                session["last_activity"] = now_dt.isoformat()
-                _atomic_write_json(SESSIONS_FILE, sessions)
-        except (ValueError, TypeError):
-            # Corrupt session — remove it
-            del sessions[token]
-            _atomic_write_json(SESSIONS_FILE, sessions)
-            return None
-    return find_user(session["username"])
+    return _session_store.get_user(token)
 
 
 def destroy_session(token: str):
-    """Remove a session. Atomic read-modify-write."""
-    with _file_locks["sessions"]:
-        sessions = _safe_read_json(SESSIONS_FILE, default={})
-        sessions.pop(token, None)
-        _atomic_write_json(SESSIONS_FILE, sessions)
+    _session_store.destroy(token)
 
 
 def destroy_user_sessions(username: str, except_token: str = None):
-    """Remove all sessions for a user, optionally keeping one token (e.g. current session)."""
-    with _file_locks["sessions"]:
-        sessions = _safe_read_json(SESSIONS_FILE, default={})
-        to_remove = [t for t, v in sessions.items()
-                     if v.get("username") == username and t != except_token]
-        for t in to_remove:
-            del sessions[t]
-        if to_remove:
-            _atomic_write_json(SESSIONS_FILE, sessions)
-            log.info(f"[Auth] Destroyed {len(to_remove)} session(s) for user '{username}'")
+    _session_store.destroy_user_sessions(username, except_token=except_token)
 
 
 def init_master_admin():
@@ -1474,8 +1556,7 @@ def init_master_admin():
         print("═══════════════════════════════════════════════════")
 
 
-# Initialize master admin on import
-init_master_admin()
+# init_master_admin() is called in main() to avoid side effects on import
 
 
 # ── Login Rate Limiter (Tiered) ─────────────────────────────────
@@ -2484,16 +2565,18 @@ def get_filtered_activity(user: dict) -> list:
     return [a for a in activity if a.get("visibility", "public") == "public"]
 
 
-_all_models_cache = {"data": None, "ts": 0}
+_all_models_cache = {"data": None, "ts": 0, "gen": 0}
 _all_models_cache_lock = threading.Lock()
 _ALL_MODELS_CACHE_TTL = 5  # seconds
 
 def get_all_models(force_refresh: bool = False) -> list:
-    """Get list of all model metadata. Cached for 5 seconds to avoid O(n) disk I/O."""
+    """Get list of all model metadata. Cached for 5 seconds to avoid O(n) disk I/O.
+    Uses a generation counter to prevent stale data overwriting fresh invalidations."""
     now = time.time()
     with _all_models_cache_lock:
         if not force_refresh and _all_models_cache["data"] is not None and (now - _all_models_cache["ts"]) < _ALL_MODELS_CACHE_TTL:
             return _all_models_cache["data"]
+        gen_at_start = _all_models_cache["gen"]
     # Build outside lock to avoid blocking readers during disk I/O
     models = []
     if MODELS_DIR.exists():
@@ -2504,14 +2587,17 @@ def get_all_models(force_refresh: bool = False) -> list:
                     models.append(meta)
     models.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     with _all_models_cache_lock:
-        _all_models_cache["data"] = models
-        _all_models_cache["ts"] = time.time()
+        # Only update if no invalidation happened while we were building
+        if _all_models_cache["gen"] == gen_at_start:
+            _all_models_cache["data"] = models
+            _all_models_cache["ts"] = time.time()
     return models
 
 def invalidate_models_cache():
     """Invalidate the models cache after create/delete/update operations."""
     with _all_models_cache_lock:
         _all_models_cache["data"] = None
+        _all_models_cache["gen"] += 1
 
 
 def get_public_models() -> list:
@@ -3417,7 +3503,7 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
         training_jobs[job_id]["status"] = "training"
 
         try:
-            df = pd.read_csv(csv_path, encoding='utf-8-sig')
+            df = _read_csv_with_fallback(csv_path)
         except Exception as e:
             raise ValueError(f"CSV dosyası okunamadı. Dosya formatını kontrol edin: {str(e)[:100]}")
 
@@ -4714,8 +4800,10 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
     def send_file_download(self, content: str, filename: str, content_type: str = "text/plain"):
         try:
             filename = self._safe_filename(filename)
+            encoded = content.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", f"{content_type}; charset=utf-8")
+            self.send_header("Content-Length", str(len(encoded)))
             self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
             origin = self._cors_origin()
             if origin:
@@ -4725,7 +4813,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                     self.send_header("Access-Control-Allow-Credentials", "true")
             self.send_header("Access-Control-Expose-Headers", "Content-Disposition")
             self.end_headers()
-            self.wfile.write(content.encode("utf-8"))
+            self.wfile.write(encoded)
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
 
@@ -4882,7 +4970,20 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json({"error": "Oturum açmanız gerekiyor"}, 401)
                 return
 
-        body = self.rfile.read(content_length) if content_length > 0 else b""
+        # Gate large body reads to prevent concurrent RAM exhaustion
+        _large_upload = content_length > _UPLOAD_SEMAPHORE_THRESHOLD
+        if _large_upload:
+            if not _upload_semaphore.acquire(timeout=30):
+                self.send_json({"error": "Sunucu meşgul. Lütfen birkaç saniye bekleyip tekrar deneyin."}, 503)
+                return
+        try:
+            body = self.rfile.read(content_length) if content_length > 0 else b""
+        except Exception:
+            if _large_upload:
+                _upload_semaphore.release()
+            raise
+        if _large_upload:
+            _upload_semaphore.release()
 
         # ── Auth routes (no auth required) ──
         if path == "/api/auth/login":
@@ -5003,7 +5104,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         if origin:
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
-            if self._cors_allowed:
+            if self._cors_allowed and self._cors_allowed != "*":
                 self.send_header("Access-Control-Allow-Credentials", "true")
         self.end_headers()
         self.wfile.write(safe_json_dumps({
@@ -5518,7 +5619,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                 return self.send_json({"error": "Dosya yazılamadı. Sunucu diski dolu olabilir."}, 507)
 
             try:
-                df_sample = pd.read_csv(csv_path, nrows=100, encoding='utf-8-sig')
+                df_sample = _read_csv_with_fallback(csv_path, nrows=100)
                 df_preview = df_sample.head(5).copy()
                 columns = list(df_sample.columns)
                 dtypes = {col: str(df_sample[col].dtype) for col in df_sample.columns}
@@ -5925,8 +6026,9 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             # Solution 4: Measure peak VRAM on first prediction for this model
             if not meta.get("measured_vram_peak_mb"):
                 try:
-                    _peak = torch.cuda.max_memory_allocated(0) // (1024 * 1024)
-                    torch.cuda.reset_peak_memory_stats(0)
+                    import torch as _torch_vram
+                    _peak = _torch_vram.cuda.max_memory_allocated(0) // (1024 * 1024)
+                    _torch_vram.cuda.reset_peak_memory_stats(0)
                     if _peak > 0:
                         update_model_meta_fields(model_id, measured_vram_peak_mb=int(_peak))
                         log.info(f"[Predict] Model {model_id[:8]} measured VRAM peak: {_peak}MB")
@@ -7905,6 +8007,9 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
 # ══════════════════════════════════════════════════════════════════
 
 def main():
+    # ── Initialize master admin (moved from module-level to avoid side effects on import) ──
+    init_master_admin()
+
     # ── Startup cleanup ──
     _startup_cleanup()
 
@@ -7973,11 +8078,23 @@ def main():
                     self._thread_semaphore.release()
                     raise
             else:
-                # Too many connections — reject immediately
+                # Too many connections — send 503 then close
                 try:
-                    request.close()
+                    request.sendall(
+                        b"HTTP/1.1 503 Service Unavailable\r\n"
+                        b"Content-Type: text/plain\r\n"
+                        b"Content-Length: 30\r\n"
+                        b"Connection: close\r\n"
+                        b"\r\n"
+                        b"Server busy, try again later."
+                    )
                 except Exception:
                     pass
+                finally:
+                    try:
+                        request.close()
+                    except Exception:
+                        pass
 
         def process_request_thread(self, request, client_address):
             try:
