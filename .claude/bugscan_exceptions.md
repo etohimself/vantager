@@ -53,6 +53,7 @@ Each entry should be a concise one-liner describing what to skip and why.
 - JobStore.__getitem__ non-atomic mutations (GIL makes dict __setitem__ atomic in CPython)
 - Integer overflow in _wilson_ci for large datasets (math is sound with clamped inputs)
 - Unquoted HTML class attribute in renderCallAnalysisResults (valid HTML, no spaces in class name)
+- Feature input element ID collision on similar column names (values collected via data-feature attribute, not getElementById)
 
 ## Already Fixed
 - Zip extraction path traversal (added member path validation)
@@ -87,3 +88,5 @@ Each entry should be a concise one-liner describing what to skip and why.
 - Audio predict empty-transcript branch missing update_fields heartbeat refresh (changed to update_fields)
 - Batch timeseries prediction KeyError on missing timestamp column (added KeyError to except)
 - Seasonal decomposition index-misaligned Series addition (switched to .values numpy arrays)
+- Audio file name collision after sanitization in eval and predict (prepended index to filenames)
+- Case-sensitive self-role-change guard in handle_update_role (added .lower())

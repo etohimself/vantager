@@ -5359,7 +5359,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             return self.send_json({"error": "Ana yöneticinin rolü değiştirilemez"}, 403)
 
         # Cannot change own role
-        if target_username == admin["username"]:
+        if target_username == admin["username"].lower():
             return self.send_json({"error": "Kendi rolünüzü değiştiremezsiniz"}, 403)
 
         with _file_locks["users"]:
@@ -7663,10 +7663,13 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             fname = re.sub(r'[^\w\-. ]', '_', af["filename"]).strip('. ')
             if not fname:
                 fname = f"audio_{_afi}.wav"
+            # Prepend index to prevent collisions when different names sanitize identically
+            fname_base, fname_ext = os.path.splitext(fname)
+            fname = f"{_afi}_{fname_base}{fname_ext}"
             fpath = temp_dir / fname
             with open(fpath, "wb") as f:
                 f.write(af["data"])
-            audio_files.append({"path": str(fpath), "filename": fname})
+            audio_files.append({"path": str(fpath), "filename": af["filename"]})
 
         # Atomic concurrency check + register (prevents TOCTOU race)
         job_id = str(uuid.uuid4())
@@ -7820,10 +7823,13 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             fname = re.sub(r'[^\w\-. ]', '_', af["filename"]).strip('. ')
             if not fname:
                 fname = f"audio_{_afi}.wav"
+            # Prepend index to prevent collisions when different names sanitize identically
+            fname_base, fname_ext = os.path.splitext(fname)
+            fname = f"{_afi}_{fname_base}{fname_ext}"
             fpath = temp_dir / fname
             with open(fpath, "wb") as f:
                 f.write(af["data"])
-            audio_files.append({"path": str(fpath), "filename": fname})
+            audio_files.append({"path": str(fpath), "filename": af["filename"]})
 
         # Atomic concurrency check + register
         job_id = str(uuid.uuid4())
