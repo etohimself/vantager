@@ -103,3 +103,4 @@ Each entry should be a concise one-liner describing what to skip and why.
 - Training heartbeat gap during fit() and post-processing (added update_fields at checkpoints)
 - Stale-job double-release of model_ref_counter/resource_manager (added _stale_released flag)
 - Llama restart loop with no cooldown after failure (added 5-minute cooldown)
+- Audio eval/predict pipelines missing _stale_released guard (added same pattern as training)

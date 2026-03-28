@@ -4507,10 +4507,11 @@ def audio_evaluate_pipeline(job_id: str, model_id: str, model_name: str,
             gc.collect()
         except Exception:
             pass
-        model_ref_counter.release(model_id)
-        resource_manager.release(resource_task_id)
-        user_action_tracker.unregister(username, "audio_eval")
-        release_model_quota(username)
+        if not audio_eval_jobs.get(job_id, {}).get("_stale_released"):
+            model_ref_counter.release(model_id)
+            resource_manager.release(resource_task_id)
+            user_action_tracker.unregister(username, "audio_eval")
+            release_model_quota(username)
         # Cleanup temp audio files and directory
         temp_dir = None
         for af in audio_files:
@@ -4642,9 +4643,10 @@ def audio_predict_pipeline(job_id: str, model_id: str,
             gc.collect()
         except Exception:
             pass
-        model_ref_counter.release(model_id)
-        resource_manager.release(resource_task_id)
-        user_action_tracker.unregister(username, "audio_predict")
+        if not audio_predict_jobs.get(job_id, {}).get("_stale_released"):
+            model_ref_counter.release(model_id)
+            resource_manager.release(resource_task_id)
+            user_action_tracker.unregister(username, "audio_predict")
         # Cleanup temp audio files and directory
         temp_dir = None
         for af in audio_files:
