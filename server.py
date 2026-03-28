@@ -1257,6 +1257,7 @@ class JobStore:
                         release_model_quota(uname)
                     job["status"] = "error"
                     job["error"] = "İş zaman aşımına uğradı (güncelleme alınamadı)"
+                    job["_stale_released"] = True
 
 
 # Global job stores (replace the old plain dicts)
@@ -3510,7 +3511,7 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
             training_jobs[job_id]["error"] = "Yeterli kaynak yok. Devam eden işlerin bitmesini bekleyin."
             return  # finally block handles unregister
 
-        training_jobs[job_id]["status"] = "training"
+        training_jobs.update_fields(job_id, status="training")
 
         try:
             df = _read_csv_with_fallback(csv_path)
@@ -3788,6 +3789,7 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
         predictor.fit(train_data=train_data, presets=preset, time_limit=600, verbosity=1,
                       num_gpus=0)  # GPU reserved for Whisper/LLM; tree models are CPU anyway
 
+        training_jobs.update_fields(job_id, _phase="leaderboard")
         leaderboard = predictor.leaderboard(silent=True)
         if len(leaderboard) == 0:
             raise ValueError("Hiçbir model eğitilemedi. Veri kalitesini veya hedef sütunu kontrol edin.")
@@ -3797,8 +3799,9 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
         test_y = test_df[target_col]
 
         submodels = []
-        for _, row in leaderboard.iterrows():
+        for _sm_idx, row in leaderboard.iterrows():
             sm_name = row["model"]
+            training_jobs.update_fields(job_id, _phase=f"eval_{_sm_idx}")
             internal_score = float(row.get("score_val", 0))
 
             try:
@@ -3938,9 +3941,11 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
             gc.collect()
         except Exception:
             pass
-        model_ref_counter.release(model_id)
-        resource_manager.release(resource_task_id)
-        user_action_tracker.unregister(username, "training")
+        # Skip releasing if stale-job detector already released these resources
+        if not training_jobs.get(job_id, {}).get("_stale_released"):
+            model_ref_counter.release(model_id)
+            resource_manager.release(resource_task_id)
+            user_action_tracker.unregister(username, "training")
         # Release pending quota reservation (model is now saved or failed)
         release_model_quota(username)
 
@@ -4139,11 +4144,13 @@ def _build_llm_prompt(user_prompt: str, transcript: str, schema: list) -> list:
 _llama_restart_event = threading.Event()
 _llama_restart_event.set()  # Initially "not restarting"
 _llama_restarting = False
+_llama_last_fail = 0.0
+_LLAMA_RESTART_COOLDOWN = 300  # 5 minutes between restart attempts after failure
 
 def _ensure_llama_running():
     """Check if llama-server subprocess is alive; restart if crashed.
     If another thread is restarting, waits for it to finish (up to 130s)."""
-    global _llama_process, _llama_log_fh, _llama_restarting
+    global _llama_process, _llama_log_fh, _llama_restarting, _llama_last_fail
     if LLAMA_BUNDLED == "false":
         return
     i_am_restarter = False
@@ -4162,6 +4169,8 @@ def _ensure_llama_running():
             i_am_restarter = True
             _llama_restart_event.clear()
         elif _llama_process is None and not _llama_restarting:
+            if time.time() - _llama_last_fail < _LLAMA_RESTART_COOLDOWN:
+                return  # Don't retry too soon after a failure
             _llama_restarting = True
             i_am_restarter = True
             _llama_restart_event.clear()
@@ -4172,6 +4181,11 @@ def _ensure_llama_running():
     if i_am_restarter:
         try:
             _start_bundled_llama()
+            if _llama_process is None:
+                _llama_last_fail = time.time()
+        except Exception:
+            _llama_last_fail = time.time()
+            raise
         finally:
             with _llama_lock:
                 _llama_restarting = False

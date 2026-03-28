@@ -56,6 +56,7 @@ Each entry should be a concise one-liner describing what to skip and why.
 - Feature input element ID collision on similar column names (values collected via data-feature attribute, not getElementById)
 - Bare torch reference in OOM error handler (NameError caught by except Exception: pass, no crash)
 - Password change reports success if user deleted concurrently (impossible race, self-harm only)
+- MSSQL export loads model without _prediction_semaphore (rare admin op, model usually cached, quick SQL generation)
 
 ## Already Fixed
 - Zip extraction path traversal (added member path validation)
@@ -99,3 +100,6 @@ Each entry should be a concise one-liner describing what to skip and why.
 - Missing CORS credentials+expose headers on Airflow ZIP export responses (added matching send_file_download pattern)
 - Missing target column validation in single timeseries prediction (added column check)
 - Airflow ZIP export not protected by model_ref_counter (added acquire/release)
+- Training heartbeat gap during fit() and post-processing (added update_fields at checkpoints)
+- Stale-job double-release of model_ref_counter/resource_manager (added _stale_released flag)
+- Llama restart loop with no cooldown after failure (added 5-minute cooldown)
