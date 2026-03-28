@@ -1252,7 +1252,8 @@ class JobStore:
                     _stale_model_id = job.get("_model_id")
                     if _stale_model_id:
                         model_ref_counter.release(_stale_model_id)
-                    if uname:
+                    # Only release quota for jobs that actually reserved it
+                    if uname and atype in ("training", "audio_eval"):
                         release_model_quota(uname)
                     job["status"] = "error"
                     job["error"] = "İş zaman aşımına uğradı (güncelleme alınamadı)"
@@ -1337,6 +1338,8 @@ def _verify_password(password: str, stored_hash: str, salt: str) -> bool:
 
 def _validate_password(password: str) -> str:
     """Validate password strength. Returns error message or empty string."""
+    if len(password) > 128:
+        return "Şifre en fazla 128 karakter olabilir"
     if len(password) < 8:
         return "Şifre en az 8 karakter olmalı"
     if not re.search(r'[A-Z]', password):
@@ -1837,6 +1840,11 @@ def _download_llama_server():
             tf.extractall(str(extract_dir))
     else:
         with zipfile.ZipFile(str(archive_path), "r") as zf:
+            # Validate zip members to prevent path traversal
+            for member in zf.namelist():
+                member_path = os.path.normpath(os.path.join(str(extract_dir), member))
+                if not member_path.startswith(str(extract_dir)):
+                    raise ValueError(f"Zip member '{member}' would extract outside target directory")
             zf.extractall(str(extract_dir))
     archive_path.unlink(missing_ok=True)
 
@@ -2010,8 +2018,9 @@ def _start_bundled_llama():
 
     log.warning("[LLM] llama-server did not start within 120s")
     with _llama_lock:
-        _llama_process.kill()
-        _llama_process = None
+        if _llama_process is not None:
+            _llama_process.kill()
+            _llama_process = None
         if _llama_log_fh:
             _llama_log_fh.close()
             _llama_log_fh = None
@@ -3488,6 +3497,7 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
         training_jobs[job_id]["status"] = "error"
         training_jobs[job_id]["error"] = "Model siliniyor, eğitim başlatılamadı."
         user_action_tracker.unregister(username, "training")
+        release_model_quota(username)
         return
     try:
         # Acquire resources
@@ -3583,7 +3593,7 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
 
             ts_predictor.fit(
                 train_data=ts_df,
-                presets=preset if preset in ("fast_training", "medium_quality",
+                presets=preset if preset in ("fast_training", "medium_quality", "good_quality",
                                              "high_quality", "best_quality") else "medium_quality",
                 time_limit=600,
                 verbosity=1,
@@ -3933,13 +3943,6 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
         user_action_tracker.unregister(username, "training")
         # Release pending quota reservation (model is now saved or failed)
         release_model_quota(username)
-        # Clean up the temp CSV directory
-        try:
-            csv_parent = Path(csv_path).parent
-            if "temp" in str(csv_parent) and csv_parent.exists():
-                shutil.rmtree(csv_parent, ignore_errors=True)
-        except OSError:
-            pass
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -4384,7 +4387,7 @@ def audio_evaluate_pipeline(job_id: str, model_id: str, model_name: str,
                 if not transcript or not transcript.strip():
                     row["error"] = "Ses dosyasından metin çıkarılamadı (sessizlik veya gürültü)"
                     row_results.append(row)
-                    audio_eval_jobs[job_id]["processed"] = audio_eval_jobs[job_id].get("processed", 0) + 1
+                    audio_eval_jobs.update_fields(job_id, processed=i + 1)
                     continue
 
                 # Step 2: Build prompt + call LLM
@@ -4402,7 +4405,7 @@ def audio_evaluate_pipeline(job_id: str, model_id: str, model_name: str,
                 row["error"] = _sanitize_error(e)
 
             row_results.append(row)
-            audio_eval_jobs[job_id]["processed"] = i + 1
+            audio_eval_jobs.update_fields(job_id, processed=i + 1)
 
         # Step 4: Compute metrics
         metrics = _compute_evaluation_metrics(row_results, schema)
@@ -4561,7 +4564,7 @@ def audio_predict_pipeline(job_id: str, model_id: str,
                 if not transcript or not transcript.strip():
                     row["error"] = "Ses dosyasından metin çıkarılamadı (sessizlik veya gürültü)"
                     row_results.append(row)
-                    audio_predict_jobs[job_id]["processed"] = i + 1
+                    audio_predict_jobs.update_fields(job_id, processed=i + 1)
                     continue
 
                 # Step 2: Build prompt + call LLM
@@ -4579,7 +4582,7 @@ def audio_predict_pipeline(job_id: str, model_id: str,
                 row["error"] = _sanitize_error(e)
 
             row_results.append(row)
-            audio_predict_jobs[job_id]["processed"] = i + 1
+            audio_predict_jobs.update_fields(job_id, processed=i + 1)
 
         # Build CSV content
         csv_buffer = io.StringIO()
@@ -4974,6 +4977,11 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         _large_upload = content_length > _UPLOAD_SEMAPHORE_THRESHOLD
         if _large_upload:
             if not _upload_semaphore.acquire(timeout=30):
+                # Drain body to prevent HTTP/1.1 connection desync
+                try:
+                    self.rfile.read(content_length)
+                except Exception:
+                    pass
                 self.send_json({"error": "Sunucu meşgul. Lütfen birkaç saniye bekleyip tekrar deneyin."}, 503)
                 return
         try:
@@ -5089,13 +5097,23 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             _login_limiter.record_attempt(f"ip:{client_ip}")
             return self.send_json({"error": "Kullanıcı adı veya şifre hatalı"}, 401)
 
-        # Successful login — reset both per-user and per-IP rate limiters
+        # Successful login — reset per-user rate limiter only
+        # (do NOT reset per-IP key: a legitimate login from a shared IP
+        #  should not clear brute-force attempts against other usernames)
         _login_limiter.reset(rate_key)
-        _login_limiter.reset(f"ip:{client_ip}")
 
         token = create_session(username)
+        body_bytes = safe_json_dumps({
+            "success": True,
+            "user": {
+                "username": user["username"],
+                "display_name": user.get("display_name", user["username"]),
+                "role": user["role"],
+            }
+        }).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body_bytes)))
         cookie_flags = f"Path=/; HttpOnly; SameSite=Strict; Max-Age={SESSION_TTL_SECONDS}"
         if os.environ.get("SECURE_COOKIES", "").lower() in ("true", "1", "yes"):
             cookie_flags += "; Secure"
@@ -5107,28 +5125,23 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             if self._cors_allowed and self._cors_allowed != "*":
                 self.send_header("Access-Control-Allow-Credentials", "true")
         self.end_headers()
-        self.wfile.write(safe_json_dumps({
-            "success": True,
-            "user": {
-                "username": user["username"],
-                "display_name": user.get("display_name", user["username"]),
-                "role": user["role"],
-            }
-        }).encode("utf-8"))
+        self.wfile.write(body_bytes)
 
     def handle_logout(self):
         token = self._get_auth_token()
         if token:
             destroy_session(token)
+        body_bytes = b'{"success": true}'
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body_bytes)))
         self.send_header("Set-Cookie", "session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0")
         origin = self._cors_origin()
         if origin:
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
         self.end_headers()
-        self.wfile.write(b'{"success": true}')
+        self.wfile.write(body_bytes)
 
     def handle_auth_me(self):
         user = self._get_current_user()
@@ -5351,10 +5364,16 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
 
         with _file_locks["users"]:
             users = load_users()
+            found = False
             for u in users:
                 if u["username"] == target_username:
+                    if u["role"] == "master_admin":
+                        return self.send_json({"error": "Ana yöneticinin rolü değiştirilemez"}, 403)
                     u["role"] = new_role
+                    found = True
                     break
+            if not found:
+                return self.send_json({"error": "Kullanıcı bulunamadı"}, 404)
             save_users(users)
 
         role_label = "Yönetici" if new_role == "admin" else "Kullanıcı"
@@ -5372,7 +5391,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             return self.send_json({"error": "Geçersiz istek"}, 400)
         if not isinstance(data, dict):
             return self.send_json({"error": "JSON nesnesi bekleniyor"}, 400)
-        username = data.get("username", "").strip()
+        username = data.get("username", "").strip().lower()
         if not username:
             return self.send_json({"error": "Kullanıcı adı gerekli"}, 400)
         with _file_locks["users"]:
@@ -5398,7 +5417,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             return self.send_json({"error": "Geçersiz istek"}, 400)
         if not isinstance(data, dict):
             return self.send_json({"error": "JSON nesnesi bekleniyor"}, 400)
-        username = data.get("username", "").strip()
+        username = data.get("username", "").strip().lower()
         if not username:
             return self.send_json({"error": "Kullanıcı adı gerekli"}, 400)
         with _file_locks["users"]:
@@ -5841,6 +5860,9 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             return self.send_json({"error": "Model bulunamadı"}, 404)
         if not self._check_model_access(meta, user):
             return
+        # Validate submodel exists
+        if not any(sm["name"] == submodel_name for sm in meta.get("submodels", [])):
+            return self.send_json({"error": f"Alt model bulunamadı: {submodel_name}"}, 404)
 
         try:
             data = json.loads(body)
@@ -5851,6 +5873,11 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
 
         # ── Handle explicit load request from UI ──
         if data.get("_load_only"):
+            if not model_ref_counter.acquire(model_id):
+                return self.send_json({"error": "Model siliniyor, lütfen bekleyin"}, 409)
+            if not _prediction_semaphore.acquire(timeout=0):
+                model_ref_counter.release(model_id)
+                return self.send_json({"error": "Sunucu meşgul. Lütfen birkaç saniye bekleyin."}, 503)
             try:
                 predictor = model_cache.load_model(model_id, meta)
                 if predictor is None:
@@ -5859,6 +5886,9 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             except Exception as e:
                 traceback.print_exc()
                 return self.send_json({"error": f"Model yüklenirken hata: {self._safe_error_message(e)}"}, 500)
+            finally:
+                _prediction_semaphore.release()
+                model_ref_counter.release(model_id)
 
         if not model_ref_counter.acquire(model_id):
             return self.send_json({"error": "Model siliniyor, lütfen bekleyin"}, 409)
@@ -5907,6 +5937,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                 target_col = meta["target_column"]
 
                 hist_df = pd.DataFrame(history_rows)
+                if ts_col not in hist_df.columns:
+                    return self.send_json({"error": f"Zaman damgası sütunu '{ts_col}' gönderilen veride bulunamadı"}, 400)
                 try:
                     hist_df[ts_col] = pd.to_datetime(hist_df[ts_col])
                 except (ValueError, TypeError) as e:
@@ -6084,6 +6116,9 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             return self.send_json({"error": "Model bulunamadı"}, 404)
         if not self._check_model_access(meta, user):
             return
+        # Validate submodel exists
+        if not any(sm["name"] == submodel_name for sm in meta.get("submodels", [])):
+            return self.send_json({"error": f"Alt model bulunamadı: {submodel_name}"}, 404)
 
         content_type = self.headers.get("Content-Type", "")
 
@@ -6125,7 +6160,18 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                 csv_data = parts.get("file", {}).get("data")
                 if not csv_data:
                     return self.send_json({"error": "CSV dosyası bulunamadı"}, 400)
-                input_df = pd.read_csv(io.BytesIO(csv_data), encoding='utf-8-sig')
+                try:
+                    input_df = pd.read_csv(io.BytesIO(csv_data), encoding='utf-8-sig')
+                except UnicodeDecodeError:
+                    input_df = None
+                    for enc in ['windows-1254', 'latin-1', 'windows-1252']:
+                        try:
+                            input_df = pd.read_csv(io.BytesIO(csv_data), encoding=enc)
+                            break
+                        except (UnicodeDecodeError, Exception):
+                            continue
+                    if input_df is None:
+                        input_df = pd.read_csv(io.BytesIO(csv_data), encoding='utf-8', errors='replace')
             else:
                 try:
                     data = json.loads(body)
@@ -6154,8 +6200,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
 
                 try:
                     input_df[ts_col] = pd.to_datetime(input_df[ts_col])
-                except (ValueError, TypeError) as e:
-                    return self.send_json({"error": f"Zaman damgası ayrıştırılamadı: {self._safe_error_message(e)}"}, 400)
+                except (ValueError, TypeError, KeyError) as e:
+                    return self.send_json({"error": f"Zaman damgası sütunu ayrıştırılamadı: {self._safe_error_message(e)}"}, 400)
                 if id_col not in input_df.columns:
                     input_df[id_col] = "series_0"
 
@@ -6289,6 +6335,9 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             return self.send_json({"error": "Model bulunamadı"}, 404)
         if not self._check_model_access(meta, user):
             return
+        # Validate submodel exists
+        if not any(sm["name"] == submodel_name for sm in meta.get("submodels", [])):
+            return self.send_json({"error": f"Alt model bulunamadı: {submodel_name}"}, 404)
 
         try:
             return self._do_export_airflow(model_id, submodel_name, meta, user)
@@ -6354,7 +6403,7 @@ CSV dosyası en az şu sütunları içermelidir:
                 if ag_model_path.exists():
                     for file_path in ag_model_path.rglob('*'):
                         if file_path.is_file() and not file_path.is_symlink():
-                            arcname = "model/" + str(file_path.relative_to(ag_model_path))
+                            arcname = "model/" + file_path.relative_to(ag_model_path).as_posix()
                             zf.write(file_path, arcname)
 
             zip_buffer.seek(0)
@@ -6427,7 +6476,7 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             if ag_model_path.exists():
                 for file_path in ag_model_path.rglob('*'):
                     if file_path.is_file() and not file_path.is_symlink():
-                        arcname = "model/" + str(file_path.relative_to(ag_model_path))
+                        arcname = "model/" + file_path.relative_to(ag_model_path).as_posix()
                         zf.write(file_path, arcname)
             # Include text pipeline config for NLP models
             pipeline_config_path = MODELS_DIR / model_id / "text_pipeline.json"
@@ -6498,6 +6547,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         else:
             feature_cols = meta["feature_columns"]
 
+        if not model_ref_counter.acquire(model_id):
+            return self.send_json({"error": "Model siliniyor, lütfen bekleyin"}, 409)
         try:
             predictor = model_cache.load_model(model_id, meta)
             if predictor is None:
@@ -6524,6 +6575,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         except Exception as e:
             traceback.print_exc()
             self.send_json({"error": self._safe_error_message(e)}, 500)
+        finally:
+            model_ref_counter.release(model_id)
 
     def handle_set_visibility(self, model_id, body):
         user = self._require_auth()
@@ -6706,7 +6759,7 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                 if not csv_path.exists():
                     return self.send_json({"error": "Eğitim verisi bulunamadı"}, 404)
 
-                df = pd.read_csv(csv_path, encoding='utf-8-sig')
+                df = _read_csv_with_fallback(csv_path)
                 target_col = meta["target_column"]
                 ts_col = meta.get("timestamp_column")
                 id_col = meta.get("item_id_column", "__item_id")
@@ -6828,8 +6881,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
 
                         # Strengths (STL-style): F_t = 1 - Var(R) / Var(T+R), F_s = 1 - Var(R) / Var(S+R)
                         var_resid = resid_comp.var()
-                        var_trend_resid = (trend_comp + resid_comp[:len(trend_comp)]).var() if len(trend_comp) > 0 else 1.0
-                        var_season_resid = (seasonal_comp[:len(resid_comp)] + resid_comp).var() if len(resid_comp) > 0 else 1.0
+                        var_trend_resid = (trend_comp.values + resid_comp.values[:len(trend_comp)]).var() if len(trend_comp) > 0 else 1.0
+                        var_season_resid = (seasonal_comp.values[:len(resid_comp)] + resid_comp.values).var() if len(resid_comp) > 0 else 1.0
 
                         trend_strength = max(0.0, float(1.0 - var_resid / var_trend_resid)) if var_trend_resid > 0 else 0.0
                         seasonal_strength = max(0.0, float(1.0 - var_resid / var_season_resid)) if var_season_resid > 0 else 0.0
@@ -7206,7 +7259,7 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             if not csv_path.exists():
                 return self.send_json({"error": "Eğitim verisi bulunamadı"}, 404)
 
-            df = pd.read_csv(csv_path, encoding='utf-8-sig')
+            df = _read_csv_with_fallback(csv_path)
             target_col = meta["target_column"]
             feature_cols = meta["feature_columns"]
 
@@ -7403,7 +7456,7 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             # Correlation analysis
             # For text models, reload original df for correlation since embedding replaced text cols
             if _is_text_model:
-                corr_df = pd.read_csv(csv_path, encoding='utf-8-sig')
+                corr_df = _read_csv_with_fallback(csv_path)
                 corr_df, _ = clean_dataframe(corr_df, context="prediction")
                 corr_df = corr_df.dropna(subset=[target_col])
             else:
@@ -7416,14 +7469,22 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                     if corr_df[col].dtype in ['object', 'category', 'bool']:
                         encoded = pd.factorize(corr_df[col])[0].astype(float)
                         encoded[encoded == -1] = np.nan
-                        target_numeric = pd.factorize(corr_df[target_col])[0].astype(float) if corr_df[target_col].dtype in ['object', 'category'] else corr_df[target_col].astype(float)
+                        if corr_df[target_col].dtype in ['object', 'category']:
+                            target_numeric = pd.factorize(corr_df[target_col])[0].astype(float)
+                            target_numeric[target_numeric == -1] = np.nan
+                        else:
+                            target_numeric = corr_df[target_col].astype(float)
                         mask = ~(np.isnan(encoded) | np.isnan(target_numeric))
                         if mask.sum() > 3:
                             corr = np.corrcoef(encoded[mask], target_numeric[mask])[0, 1]
                             if not np.isnan(corr):
                                 correlations[col] = round(float(corr), 4)
                     else:
-                        target_numeric = pd.factorize(corr_df[target_col])[0].astype(float) if corr_df[target_col].dtype in ['object', 'category'] else corr_df[target_col].astype(float)
+                        if corr_df[target_col].dtype in ['object', 'category']:
+                            target_numeric = pd.factorize(corr_df[target_col])[0].astype(float)
+                            target_numeric[target_numeric == -1] = np.nan
+                        else:
+                            target_numeric = corr_df[target_col].astype(float)
                         mask = ~(corr_df[col].isna() | np.isnan(target_numeric))
                         if mask.sum() > 3:
                             corr = np.corrcoef(corr_df[col][mask].astype(float), target_numeric[mask])[0, 1]
@@ -7622,6 +7683,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             "processed": 0,
             "_username": user["username"],
             "_action_type": "audio_eval",
+            "_resource_task_id": f"audio_eval_{job_id}",
+            "_model_id": model_id,
         }
 
         try:
@@ -7776,6 +7839,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             "processed": 0,
             "_username": user["username"],
             "_action_type": "audio_predict",
+            "_resource_task_id": f"audio_predict_{job_id}",
+            "_model_id": model_id,
         }
 
         try:
@@ -8083,7 +8148,7 @@ def main():
                     request.sendall(
                         b"HTTP/1.1 503 Service Unavailable\r\n"
                         b"Content-Type: text/plain\r\n"
-                        b"Content-Length: 30\r\n"
+                        b"Content-Length: 29\r\n"
                         b"Connection: close\r\n"
                         b"\r\n"
                         b"Server busy, try again later."
