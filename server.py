@@ -2966,7 +2966,10 @@ def _sklearn_tree_ensemble_to_sql(model, feature_columns: list) -> str:
             sql = _tree_to_case_when(tree_dict, feature_columns)
             tree_sqls.append(f"({sql})")
         sum_expr = " + ".join(tree_sqls)
-        return f"({sum_expr}) / {len(tree_sqls)}.0"
+        truncation_warning = ""
+        if len(estimators) > 20:
+            truncation_warning = f"/* UYARI: Model {len(estimators)} ağaç içeriyor, SQL yalnızca ilk 20 ağacı kullanıyor — sonuçlar yaklaşık olacaktır */\n"
+        return f"{truncation_warning}({sum_expr}) / {len(tree_sqls)}.0"
     except Exception as e:
         print(f"sklearn tree ensemble to SQL hatası: {e}")
         return None
@@ -7279,6 +7282,10 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             finally:
                 model_ref_counter.release(model_id)
 
+        if not _prediction_semaphore.acquire(timeout=0):
+            model_ref_counter.release(model_id)
+            return self.send_json({"error": "Sunucu meşgul. Lütfen birkaç saniye bekleyin."}, 503)
+
         try:
             predictor = model_cache.load_model(model_id, meta)
             if predictor is None:
@@ -7605,6 +7612,7 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             traceback.print_exc()
             self.send_json({"error": self._safe_error_message(e)}, 500)
         finally:
+            _prediction_semaphore.release()
             model_ref_counter.release(model_id)
 
     # ── Audio Evaluation Handlers ─────────────────────────────────

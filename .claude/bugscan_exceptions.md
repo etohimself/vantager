@@ -57,6 +57,9 @@ Each entry should be a concise one-liner describing what to skip and why.
 - Bare torch reference in OOM error handler (NameError caught by except Exception: pass, no crash)
 - Password change reports success if user deleted concurrently (impossible race, self-harm only)
 - MSSQL export loads model without _prediction_semaphore (rare admin op, model usually cached, quick SQL generation)
+- Audio predict jobs submitted to _audio_eval_queue with wrong job store (microsecond gap, pipeline sets status itself)
+- Non-atomic job status+error dict updates (microsecond window, next poll correct)
+- handle_predict_batch doesn't validate rows is a list (caught by outer exception handler)
 
 ## Already Fixed
 - Zip extraction path traversal (added member path validation)
@@ -104,3 +107,5 @@ Each entry should be a concise one-liner describing what to skip and why.
 - Stale-job double-release of model_ref_counter/resource_manager (added _stale_released flag)
 - Llama restart loop with no cooldown after failure (added 5-minute cooldown)
 - Audio eval/predict pipelines missing _stale_released guard (added same pattern as training)
+- handle_explain tabular path missing _prediction_semaphore (added semaphore acquire/release)
+- sklearn tree ensemble SQL missing truncation warning for >20 estimators (added warning)
