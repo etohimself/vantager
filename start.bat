@@ -44,8 +44,18 @@ if not "!CLOUDFLARE_TUNNEL_TOKEN!"=="" (
     echo [Tunnel] No CLOUDFLARE_TUNNEL_TOKEN set -- skipping tunnel
 )
 
-:: ── Start application ──
-:: Note: Windows typically uses 'python' rather than 'python3'
+:: ── Start application (auto-restart on crash) ──
+set "RESTART_DELAY=3"
+:restart_loop
+echo [Server] Starting Vantager...
 python server.py
+if !ERRORLEVEL! == 0 (
+    echo [Server] Exited cleanly. Stopping.
+    goto :end
+)
+echo [Server] Crashed with exit code !ERRORLEVEL!. Restarting in %RESTART_DELAY%s...
+timeout /t %RESTART_DELAY% /nobreak >nul
+goto :restart_loop
 
+:end
 endlocal

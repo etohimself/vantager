@@ -29,5 +29,16 @@ else
     echo "[Tunnel] No CLOUDFLARE_TUNNEL_TOKEN set — skipping tunnel"
 fi
 
-# ── Start application ──
-exec python3 server.py
+# ── Start application (auto-restart on crash) ──
+RESTART_DELAY=3
+while true; do
+    echo "[Server] Starting Vantager..."
+    python3 server.py
+    EXIT_CODE=$?
+    if [ "$EXIT_CODE" -eq 0 ]; then
+        echo "[Server] Exited cleanly (code 0). Stopping."
+        break
+    fi
+    echo "[Server] Crashed with exit code $EXIT_CODE. Restarting in ${RESTART_DELAY}s..."
+    sleep "$RESTART_DELAY"
+done
