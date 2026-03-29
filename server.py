@@ -39,6 +39,26 @@ logging.basicConfig(
 )
 log = logging.getLogger("TahminPlatformu")
 
+# ── In-memory ring buffer for /api/admin/logs endpoint ────────────
+import collections as _collections
+_LOG_RING_BUFFER = _collections.deque(maxlen=2000)
+_LOG_RING_LOCK = threading.Lock()
+
+class _RingBufferHandler(logging.Handler):
+    """Captures formatted log lines into a fixed-size deque."""
+    def emit(self, record):
+        try:
+            line = self.format(record)
+            with _LOG_RING_LOCK:
+                _LOG_RING_BUFFER.append(line)
+        except Exception:
+            pass
+
+_ring_handler = _RingBufferHandler()
+_ring_handler.setFormatter(logging.Formatter(
+    "%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+logging.getLogger().addHandler(_ring_handler)  # attach to root logger
+
 
 # ══════════════════════════════════════════════════════════════════
 #  NaN-SAFE JSON ENCODER & DATA CLEANING UTILITIES
@@ -5247,6 +5267,9 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         elif path == "/api/admin/pending-users":
             return self.handle_pending_users()
 
+        elif path == "/api/admin/logs":
+            return self.handle_admin_logs(params)
+
         elif path == "/api/queue/status":
             return self.handle_queue_status()
 
@@ -5807,6 +5830,18 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                     "created_at": u.get("created_at", "")}
                    for u in users if u.get("status") == "pending"]
         self.send_json({"pending": pending, "count": len(pending)})
+
+    def handle_admin_logs(self, params):
+        """Return recent server log lines. Admin only."""
+        admin = self._require_admin()
+        if not admin:
+            return
+        limit = min(int(params.get("limit", [2000])[0]), 2000)
+        with _LOG_RING_LOCK:
+            lines = list(_LOG_RING_BUFFER)
+        # Return most recent `limit` lines
+        lines = lines[-limit:]
+        self.send_json({"lines": lines, "count": len(lines)})
 
     def handle_queue_status(self):
         user = self._require_auth()

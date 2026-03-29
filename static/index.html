@@ -80,10 +80,27 @@
         .featured-card { background: linear-gradient(135deg, #ECFDF5, #fff); border: 1px solid #6EE7B7; border-radius: 14px; padding: 20px; }
         .tip-cell { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default; }
         #global-tip { position: fixed; padding: 8px 14px; background: #1E293B; color: #fff; font-size: 12px; line-height: 1.5; border-radius: 8px; max-width: 400px; word-wrap: break-word; white-space: normal; z-index: 99999; box-shadow: 0 4px 16px rgba(0,0,0,0.2); pointer-events: none; display: none; }
+        /* ── Toast notifications ── */
+        #toast-container { position: fixed; top: 20px; right: 20px; z-index: 100000; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+        .toast { pointer-events: auto; display: flex; align-items: flex-start; gap: 10px; padding: 12px 16px; border-radius: 10px; font-size: 14px; line-height: 1.5; max-width: 420px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); animation: toastIn 0.3s ease-out; word-break: break-word; }
+        .toast-error { background: #FEF2F2; color: #991B1B; border: 1px solid #FECACA; }
+        .toast-warn { background: #FFF7ED; color: #9A3412; border: 1px solid #FED7AA; }
+        .toast-info { background: #EFF6FF; color: #1E40AF; border: 1px solid #BFDBFE; }
+        .toast-success { background: #ECFDF5; color: #065F46; border: 1px solid #A7F3D0; }
+        .toast-close { flex-shrink: 0; cursor: pointer; opacity: 0.5; font-size: 18px; line-height: 1; margin-left: auto; padding: 0 2px; }
+        .toast-close:hover { opacity: 1; }
+        @keyframes toastIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+        @keyframes toastOut { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(40px); } }
+        /* ── Confirm modal ── */
+        .modal-backdrop { position: fixed; inset: 0; background: rgba(15,23,42,0.45); z-index: 100001; display: flex; align-items: center; justify-content: center; animation: fadeIn 0.2s ease-out; }
+        .modal-box { background: #fff; border-radius: 14px; padding: 28px; max-width: 440px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.2); animation: fadeIn 0.2s ease-out; }
+        .modal-box p { font-size: 15px; line-height: 1.6; color: #334155; margin-bottom: 24px; white-space: pre-line; }
+        .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
     </style>
 </head>
 <body class="min-h-screen">
     <div id="global-tip"></div>
+    <div id="toast-container"></div>
     <nav id="main-nav" class="hidden bg-white sticky top-0 z-50 px-6 py-3 flex items-center justify-between" style="border-bottom: 1px solid #CBD5E1; box-shadow: 0 1px 4px rgba(0,0,0,0.07);">
         <div class="flex items-center gap-3 cursor-pointer" onclick="navigate('/')">
             <div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background: linear-gradient(135deg, #10B981, #059669);">
@@ -113,6 +130,46 @@
         var s = String(str).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/`/g,'\\`').replace(/\$/g,'\\$').replace(/\n/g,'\\n').replace(/\r/g,'\\r');
         // Step 2: HTML entity encode for safe embedding in HTML attributes
         return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  DOM-BASED TOAST & CONFIRM (replaces alert/confirm)
+    // ══════════════════════════════════════════════════════════
+    function showToast(msg, type) {
+        type = type || 'error';
+        const c = document.getElementById('toast-container');
+        const t = document.createElement('div');
+        t.className = 'toast toast-' + type;
+        t.innerHTML = '<span>' + esc(String(msg)) + '</span><span class="toast-close" onclick="this.parentElement.remove()">&times;</span>';
+        c.appendChild(t);
+        const timer = setTimeout(function() { dismissToast(t); }, type === 'error' ? 6000 : 4000);
+        t._timer = timer;
+    }
+    function dismissToast(t) {
+        if (!t.parentElement) return;
+        clearTimeout(t._timer);
+        t.style.animation = 'toastOut 0.25s ease-in forwards';
+        t.addEventListener('animationend', function() { t.remove(); });
+    }
+    function showConfirm(msg) {
+        return new Promise(function(resolve) {
+            const backdrop = document.createElement('div');
+            backdrop.className = 'modal-backdrop';
+            backdrop.innerHTML =
+                '<div class="modal-box">' +
+                    '<p>' + esc(String(msg)) + '</p>' +
+                    '<div class="modal-actions">' +
+                        '<button class="btn-secondary btn-sm" data-action="cancel">\u0130ptal</button>' +
+                        '<button class="btn-primary btn-sm" data-action="ok">Evet</button>' +
+                    '</div>' +
+                '</div>';
+            document.body.appendChild(backdrop);
+            function close(val) { backdrop.remove(); resolve(val); }
+            backdrop.querySelector('[data-action="ok"]').onclick = function() { close(true); };
+            backdrop.querySelector('[data-action="cancel"]').onclick = function() { close(false); };
+            backdrop.addEventListener('click', function(e) { if (e.target === backdrop) close(false); });
+            backdrop.querySelector('[data-action="ok"]').focus();
+        });
     }
 
     function parseCSVLine(line) {
@@ -205,6 +262,7 @@
         const path = getRoute();
         currentRoute = path;
         destroyCharts();
+        if (_logsAutoRefresh) { clearInterval(_logsAutoRefresh); _logsAutoRefresh = null; }
         updateNav(path);
 
         if (path === '/') return renderDashboard();
@@ -213,6 +271,7 @@
         if (path === '/admin') return renderAdmin();
         if (path === '/examples') return renderExamples();
         if (path === '/settings') return renderSettings();
+        if (path === '/serverlogs') return renderServerLogs();
 
         let m;
         if (m = path.match(/^\/model\/([^/]+)\/results$/)) return renderResults(m[1]);
@@ -1090,7 +1149,7 @@
     async function processFile(file) {
         const MAX_FILE_SIZE_MB = 200;
         if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
-            alert(`Dosya \u00e7ok b\u00fcy\u00fck (${(file.size / 1024 / 1024).toFixed(1)}MB). Maksimum: ${MAX_FILE_SIZE_MB}MB`);
+            showToast(`Dosya \u00e7ok b\u00fcy\u00fck (${(file.size / 1024 / 1024).toFixed(1)}MB). Maksimum: ${MAX_FILE_SIZE_MB}MB`, 'warn');
             return;
         }
         const formData = new FormData();
@@ -1101,7 +1160,7 @@
                 credentials: 'same-origin',
             });
             const data = await res.json();
-            if (data.error) { alert('Bir sorun olu\u015ftu: ' + data.error); return; }
+            if (data.error) { showToast('Bir sorun olu\u015ftu: ' + data.error); return; }
             uploadData = data;
             document.getElementById('train-step1').classList.add('hidden');
             document.getElementById('train-step2').classList.remove('hidden');
@@ -1116,7 +1175,7 @@
             if (idCol) idCol.innerHTML = '<option value="">\u2014 Tekli seri \u2014</option>' + data.columns.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
 
             renderPreviewTable(data.preview, data.columns);
-        } catch (err) { alert('Dosya y\u00fcklenirken bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
+        } catch (err) { showToast('Dosya y\u00fcklenirken bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
     }
 
     function renderPreviewTable(rows, columns) {
@@ -1161,7 +1220,7 @@
             if (predLen) payload.prediction_length = parseInt(predLen.value) || 10;
 
             if (!payload.timestamp_column) {
-                alert('Gelecek tahmini i\u00e7in bir zaman s\u00fctunu se\u00e7melisiniz.');
+                showToast('Gelecek tahmini i\u00e7in bir zaman s\u00fctunu se\u00e7melisiniz.', 'warn');
                 if (trainBtn) trainBtn.disabled = false;
                 return;
             }
@@ -1173,7 +1232,7 @@
         try {
             const res = await api('/api/train', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             if (res.error) {
-                alert('Bir sorun olu\u015ftu: ' + res.error);
+                showToast('Bir sorun olu\u015ftu: ' + res.error);
                 document.getElementById('train-step2').classList.remove('hidden');
                 document.getElementById('train-step3').classList.add('hidden');
                 if (trainBtn) trainBtn.disabled = false;
@@ -1181,7 +1240,7 @@
             }
             pollTrainingStatus(res.job_id);
         } catch (err) {
-            alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
+            showToast('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
             document.getElementById('train-step2').classList.remove('hidden');
             document.getElementById('train-step3').classList.add('hidden');
             if (trainBtn) trainBtn.disabled = false;
@@ -1328,7 +1387,7 @@
         const MAX_AUDIO_SIZE_MB = 200;
         files.forEach(f => {
             if (f.size > MAX_AUDIO_SIZE_MB * 1024 * 1024) {
-                alert(`Dosya \u00e7ok b\u00fcy\u00fck: ${f.name} (${(f.size / 1024 / 1024).toFixed(1)}MB). Maksimum: ${MAX_AUDIO_SIZE_MB}MB`);
+                showToast(`Dosya \u00e7ok b\u00fcy\u00fck: ${f.name} (${(f.size / 1024 / 1024).toFixed(1)}MB). Maksimum: ${MAX_AUDIO_SIZE_MB}MB`, 'warn');
                 return;
             }
             if (!audioFiles.some(af => af.name === f.name)) {
@@ -1408,10 +1467,10 @@
 
     async function startAudioEvaluation() {
         const schema = getSchema();
-        if (!schema.length) return alert('En az bir kriter tan\u0131mlamal\u0131s\u0131n\u0131z.');
+        if (!schema.length) { showToast('En az bir kriter tan\u0131mlamal\u0131s\u0131n\u0131z.', 'warn'); return; }
         const prompt = document.getElementById('audio-prompt').value.trim();
-        if (!prompt) return alert('De\u011ferlendirme talimat\u0131 yazmal\u0131s\u0131n\u0131z.');
-        if (!audioFiles.length) return alert('En az bir ses dosyas\u0131 y\u00feklemelisiniz.');
+        if (!prompt) { showToast('De\u011ferlendirme talimat\u0131 yazmal\u0131s\u0131n\u0131z.', 'warn'); return; }
+        if (!audioFiles.length) { showToast('En az bir ses dosyas\u0131 y\u00feklemelisiniz.', 'warn'); return; }
 
         const modelName = document.getElementById('audio-model-name').value.trim() || `Ses Analizi ${new Date().toLocaleString('tr-TR')}`;
         const language = document.getElementById('audio-language').value;
@@ -1453,13 +1512,13 @@
             });
             const data = await res.json();
             if (data.error) {
-                alert('Bir sorun olu\u015ftu: ' + data.error);
+                showToast('Bir sorun olu\u015ftu: ' + data.error);
                 navigate('/train');
                 return;
             }
             pollAudioEvalStatus(data.job_id);
         } catch (err) {
-            alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
+            showToast('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
             navigate('/train');
         }
     }
@@ -1794,7 +1853,7 @@
         const MAX_AUDIO_SIZE_MB = 200;
         files.forEach(f => {
             if (f.size > MAX_AUDIO_SIZE_MB * 1024 * 1024) {
-                alert(`Dosya \u00e7ok b\u00fcy\u00fck: ${f.name} (${(f.size / 1024 / 1024).toFixed(1)}MB). Maksimum: ${MAX_AUDIO_SIZE_MB}MB`);
+                showToast(`Dosya \u00e7ok b\u00fcy\u00fck: ${f.name} (${(f.size / 1024 / 1024).toFixed(1)}MB). Maksimum: ${MAX_AUDIO_SIZE_MB}MB`, 'warn');
                 return;
             }
             if (!predictAudioFiles.some(af => af.name === f.name)) {
@@ -1830,7 +1889,7 @@
     }
 
     async function startAudioPrediction(modelId) {
-        if (!predictAudioFiles.length) return alert('En az bir ses dosyas\u0131 y\u00feklemelisiniz.');
+        if (!predictAudioFiles.length) { showToast('En az bir ses dosyas\u0131 y\u00feklemelisiniz.', 'warn'); return; }
 
         const predictBtn = document.getElementById('start-audio-predict-btn');
         if (predictBtn) predictBtn.disabled = true;
@@ -1849,7 +1908,7 @@
             });
             const data = await res.json();
             if (data.error) {
-                alert('Bir sorun olu\u015ftu: ' + data.error);
+                showToast('Bir sorun olu\u015ftu: ' + data.error);
                 document.getElementById('start-audio-predict-btn').classList.remove('hidden');
                 document.getElementById('audio-predict-progress').classList.add('hidden');
                 if (predictBtn) predictBtn.disabled = false;
@@ -1857,7 +1916,7 @@
             }
             pollAudioPredictStatus(data.job_id, modelId);
         } catch (err) {
-            alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
+            showToast('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
             document.getElementById('start-audio-predict-btn').classList.remove('hidden');
             document.getElementById('audio-predict-progress').classList.add('hidden');
             if (predictBtn) predictBtn.disabled = false;
@@ -1986,7 +2045,7 @@
             const res = await fetch(API + `/api/audio-predict/${jobId}/download-csv`, {
                 credentials: 'same-origin',
             });
-            if (!res.ok) { alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); return; }
+            if (!res.ok) { showToast('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); return; }
             const blob = await res.blob();
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -1999,7 +2058,7 @@
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
         } catch (err) {
-            alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
+            showToast('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
         }
     }
 
@@ -2309,7 +2368,7 @@
                 body: JSON.stringify({ _load_only: true }),
             });
             if (res.error) {
-                alert('Haz\u0131rlama ba\u015far\u0131s\u0131z oldu: ' + res.error);
+                showToast('Haz\u0131rlama ba\u015far\u0131s\u0131z oldu: ' + res.error);
                 btnEl.textContent = origText;
                 btnEl.disabled = false;
                 btnEl.style.opacity = '1';
@@ -2321,7 +2380,7 @@
                 banner.innerHTML = '<strong>Haz\u0131r!</strong> Art\u0131k CSV y\u00fckleyerek h\u0131zl\u0131ca tahmin yapabilirsiniz.';
             }
         } catch (e) {
-            alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
+            showToast('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
             btnEl.textContent = origText;
             btnEl.disabled = false;
             btnEl.style.opacity = '1';
@@ -2342,7 +2401,7 @@
                 body: JSON.stringify({ _load_only: true }),
             });
             if (res.error) {
-                alert('Haz\u0131rlama ba\u015far\u0131s\u0131z oldu: ' + res.error);
+                showToast('Haz\u0131rlama ba\u015far\u0131s\u0131z oldu: ' + res.error);
                 btn.textContent = origText;
                 btn.disabled = false;
                 btn.style.opacity = '1';
@@ -2357,7 +2416,7 @@
             const note = btn.nextElementSibling;
             if (note && note.tagName === 'P') note.remove();
         } catch (e) {
-            alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
+            showToast('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
             btn.textContent = origText;
             btn.disabled = false;
             btn.style.opacity = '1';
@@ -2374,7 +2433,7 @@
             features[inp.dataset.feature] = val;
         });
         const filledCount = Object.values(features).filter(v => v !== '').length;
-        if (filledCount === 0) { alert('L\u00fctfen en az bir bilgi girin.'); return; }
+        if (filledCount === 0) { showToast('L\u00fctfen en az bir bilgi girin.', 'warn'); return; }
 
         try {
             const res = await api(`/api/models/${modelId}/predict/${encodeURIComponent(submodelName)}`, {
@@ -2401,7 +2460,7 @@
                 html += '</div>';
             }
             contentDiv.innerHTML = html;
-        } catch (err) { alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
+        } catch (err) { showToast('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
     }
 
     async function runTimeSeriesPrediction(file, modelId, submodelName) {
@@ -2996,7 +3055,7 @@
             const resultDiv = document.getElementById('cost-result');
             resultDiv.classList.remove('hidden');
             resultDiv.innerHTML = `<div class="grid grid-cols-2 gap-4"><div class="p-4 rounded-xl bg-brand-50 border border-brand-200"><div class="text-slate-500 text-xs mb-1">Tahmini Ayl\u0131k Maliyet</div><div class="text-3xl font-bold text-brand-700">$${res.total_monthly.toFixed(2)}</div></div><div class="p-4 rounded-xl bg-slate-50"><div class="text-slate-500 text-xs mb-1">Ayl\u0131k \u00c7al\u0131\u015fma Say\u0131s\u0131</div><div class="text-2xl font-bold text-slate-800">${res.executions_per_month}</div><div class="text-slate-400 text-xs">${res.estimated_job_duration_sec}sn/i\u015f \u00b7 ${res.time_per_row_ms}ms/sat\u0131r</div></div></div>`;
-        } catch (err) { alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
+        } catch (err) { showToast('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
     }
 
     async function downloadExport(type, modelId, submodelName) {
@@ -3016,9 +3075,9 @@
                 URL.revokeObjectURL(link.href);
             } else {
                 const data = await res.json();
-                alert(data.error || 'Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
+                showToast(data.error || 'Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
             }
-        } catch (err) { alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
+        } catch (err) { showToast('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
     }
 
     async function downloadCallAnalysisCSV(modelId) {
@@ -3036,21 +3095,21 @@
                 URL.revokeObjectURL(link.href);
             } else {
                 const data = await res.json();
-                alert(data.error || 'Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
+                showToast(data.error || 'Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.');
             }
-        } catch (err) { alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
+        } catch (err) { showToast('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
     }
 
     // ══════════════════════════════════════════════════════════
     //  DELETE MODEL
     // ══════════════════════════════════════════════════════════
     async function deleteModel(modelId, modelName, redirectTo) {
-        if (!confirm(`"${modelName}" analizini silmek istedi\u011finize emin misiniz?\n\nBu i\u015flem geri al\u0131namaz. Analiz ve t\u00fcm sonu\u00e7lar\u0131 kal\u0131c\u0131 olarak silinecektir.`)) return;
+        if (!await showConfirm(`"${modelName}" analizini silmek istedi\u011finize emin misiniz?\n\nBu i\u015flem geri al\u0131namaz. Analiz ve t\u00fcm sonu\u00e7lar\u0131 kal\u0131c\u0131 olarak silinecektir.`)) return;
         try {
             const res = await api(`/api/models/${modelId}/delete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-            if (res.error) { alert('Silme s\u0131ras\u0131nda bir sorun olu\u015ftu: ' + res.error); return; }
+            if (res.error) { showToast('Silme s\u0131ras\u0131nda bir sorun olu\u015ftu: ' + res.error); return; }
             navigate(redirectTo || '/');
-        } catch (err) { alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
+        } catch (err) { showToast('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
     }
 
     // ══════════════════════════════════════════════════════════
@@ -3194,31 +3253,71 @@
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username, role }),
         });
-        if (res.error) alert(res.error);
+        if (res.error) showToast(res.error);
     }
 
     async function approveUser(username) {
-        if (!confirm(username + ' kullan\u0131c\u0131s\u0131n\u0131 onaylamak istedi\u011finize emin misiniz?')) return;
+        if (!await showConfirm(username + ' kullan\u0131c\u0131s\u0131n\u0131 onaylamak istedi\u011finize emin misiniz?')) return;
         const res = await api('/api/admin/approve-user', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username }) });
         if (res.success) renderAdmin();
-        else alert(res.error || 'Bir sorun olu\u015ftu');
+        else showToast(res.error || 'Bir sorun olu\u015ftu');
     }
 
     async function rejectUser(username) {
-        if (!confirm(username + ' kullan\u0131c\u0131s\u0131n\u0131n ba\u015fvurusunu reddetmek istedi\u011finize emin misiniz?')) return;
+        if (!await showConfirm(username + ' kullan\u0131c\u0131s\u0131n\u0131n ba\u015fvurusunu reddetmek istedi\u011finize emin misiniz?')) return;
         const res = await api('/api/admin/reject-user', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username }) });
         if (res.success) renderAdmin();
-        else alert(res.error || 'Bir sorun olu\u015ftu');
+        else showToast(res.error || 'Bir sorun olu\u015ftu');
     }
 
     async function deleteUser(username) {
-        if (!confirm(username + ' kullan\u0131c\u0131s\u0131n\u0131 kal\u0131c\u0131 olarak silmek istedi\u011finize emin misiniz?')) return;
+        if (!await showConfirm(username + ' kullan\u0131c\u0131s\u0131n\u0131 kal\u0131c\u0131 olarak silmek istedi\u011finize emin misiniz?')) return;
         const res = await api('/api/admin/delete-user', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username }) });
         if (res.success) renderAdmin();
-        else alert(res.error || 'Bir sorun olu\u015ftu');
+        else showToast(res.error || 'Bir sorun olu\u015ftu');
     }
 
     // ══════════════════════════════════════════════════════════
+    //  SERVER LOGS (admin only)
+    // ══════════════════════════════════════════════════════════
+    let _logsAutoRefresh = null;
+    async function renderServerLogs() {
+        if (!isAdmin()) { navigate('/'); return; }
+        app().innerHTML = `
+        <div class="fade-in">
+            <div class="flex items-center justify-between mb-6">
+                <h1 class="text-2xl font-bold text-slate-800">Sunucu Loglar\u0131</h1>
+                <div class="flex items-center gap-3">
+                    <label class="flex items-center gap-2 text-sm text-slate-600">
+                        <input type="checkbox" id="logs-auto" checked onchange="toggleLogsAuto(this.checked)">
+                        Otomatik yenile
+                    </label>
+                    <button class="btn-secondary btn-sm" onclick="fetchServerLogs()">Yenile</button>
+                </div>
+            </div>
+            <div class="card-flat p-0 overflow-hidden">
+                <pre id="logs-output" style="background:#0F172A;color:#E2E8F0;padding:20px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.7;max-height:80vh;overflow:auto;white-space:pre-wrap;word-break:break-all;margin:0;"></pre>
+            </div>
+        </div>`;
+        await fetchServerLogs();
+        _logsAutoRefresh = setInterval(fetchServerLogs, 3000);
+    }
+    async function fetchServerLogs() {
+        try {
+            const res = await api('/api/admin/logs?limit=2000');
+            if (!res.lines) return;
+            const el = document.getElementById('logs-output');
+            if (!el) { clearInterval(_logsAutoRefresh); return; }
+            const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+            el.textContent = res.lines.join('\n');
+            if (wasAtBottom) el.scrollTop = el.scrollHeight;
+        } catch (e) {}
+    }
+    function toggleLogsAuto(on) {
+        clearInterval(_logsAutoRefresh);
+        if (on) _logsAutoRefresh = setInterval(fetchServerLogs, 3000);
+    }
+
     //  SETTINGS
     // ══════════════════════════════════════════════════════════
     async function renderSettings() {
@@ -3367,9 +3466,9 @@
                 URL.revokeObjectURL(a.href);
             } else {
                 const d = await res.json();
-                alert(d.error || 'Bir sorun olu\u015ftu.');
+                showToast(d.error || 'Bir sorun olu\u015ftu.');
             }
-        } catch (e) { alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
+        } catch (e) { showToast('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
     }
 
     async function downloadExampleAudioZip() {
@@ -3384,9 +3483,9 @@
                 URL.revokeObjectURL(a.href);
             } else {
                 const d = await res.json();
-                alert(d.error || 'Bir sorun olu\u015ftu.');
+                showToast(d.error || 'Bir sorun olu\u015ftu.');
             }
-        } catch (e) { alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
+        } catch (e) { showToast('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
     }
 
     // ══════════════════════════════════════════════════════════
