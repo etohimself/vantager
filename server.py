@@ -141,7 +141,7 @@ def _read_csv_with_fallback(csv_path, **kwargs):
         return pd.read_csv(csv_path, encoding='utf-8', errors='replace', **kwargs)
 
 
-def clean_dataframe(df, context="training", timestamp_column=None):
+def clean_dataframe(df, context="training", timestamp_column=None, item_id_column=None):
     """Clean a DataFrame for ML processing."""
     import pandas as pd
     import numpy as np
@@ -185,8 +185,16 @@ def clean_dataframe(df, context="training", timestamp_column=None):
                 report["actions_taken"].append(f"'{col}' sütunundaki sonsuz değerler NaN ile değiştirildi")
 
         # Forward-fill then backward-fill to maintain sequence integrity
-        nan_before = df.isna().sum().sum()
-        total_cells = df.shape[0] * df.shape[1]
+        # Exclude ID and timestamp columns — ffill on item_id would silently mix series
+        fill_exclude = set()
+        if timestamp_column:
+            fill_exclude.add(timestamp_column)
+        if item_id_column and item_id_column in df.columns:
+            fill_exclude.add(item_id_column)
+        fill_cols = [c for c in df.columns if c not in fill_exclude]
+
+        nan_before = df[fill_cols].isna().sum().sum() if fill_cols else 0
+        total_cells = len(fill_cols) * len(df) if fill_cols else 1
         # Reject datasets with >80% missing values — ffill would fabricate most of the data
         pre_fill_ratio = nan_before / max(total_cells, 1)
         if pre_fill_ratio > 0.8:
@@ -194,8 +202,8 @@ def clean_dataframe(df, context="training", timestamp_column=None):
                 f"Veri setinde çok fazla eksik değer var ({pre_fill_ratio:.0%}). "
                 f"Zaman serisi analizi için daha yoğun veri gerekiyor."
             )
-        df = df.ffill().bfill()
-        nan_after = df.isna().sum().sum()
+        df[fill_cols] = df[fill_cols].ffill().bfill()
+        nan_after = df[fill_cols].isna().sum().sum() if fill_cols else 0
         filled_count = nan_before - nan_after
         if filled_count > 0:
             fill_ratio = filled_count / max(total_cells, 1)
@@ -3552,7 +3560,8 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
                 raise ValueError("Gerekli bileşen yüklü değil. Lütfen sistem yöneticisine bildirin.")
 
             df, cleaning_report = clean_dataframe(df, context="timeseries",
-                                                  timestamp_column=timestamp_column)
+                                                  timestamp_column=timestamp_column,
+                                                  item_id_column=item_id_column)
 
             if target_col not in df.columns:
                 raise ValueError(f"Hedef sütun '{target_col}' veride bulunamadı")
@@ -3564,6 +3573,21 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
                 df[timestamp_column] = pd.to_datetime(df[timestamp_column])
             except (ValueError, TypeError) as e:
                 raise ValueError(f"Zaman damgası sütunundaki tarihler ayrıştırılamadı: {str(e)[:100]}")
+
+            # Validate target column is numeric
+            if df[target_col].dtype.kind not in ("i", "f"):
+                raise ValueError(
+                    f"Zaman serisi hedef sütunu '{target_col}' sayısal olmalı. "
+                    f"Bulunan tür: {df[target_col].dtype}"
+                )
+
+            # Reject if target column has too many NaN (ffill would fabricate targets)
+            target_nan_ratio = df[target_col].isna().sum() / max(len(df), 1)
+            if target_nan_ratio > 0.5:
+                raise ValueError(
+                    f"Hedef sütun '{target_col}' çok fazla eksik değer içeriyor "
+                    f"(%{target_nan_ratio:.0%}). Zaman serisi için hedef verisi yoğun olmalı."
+                )
 
             # Handle item_id: if user has single series, create a dummy ID
             if item_id_column and item_id_column in df.columns:
@@ -3745,8 +3769,9 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
                 if avg_len > 30:
                     text_columns.append(col)
 
-        # Save original feature names (human-readable) before embedding
+        # Save original feature names and types (human-readable) before embedding
         feature_cols_original = [c for c in df.columns if c != target_col]
+        column_types_original = {col: str(df[col].dtype) for col in df.columns}
 
         if not feature_cols_original:
             raise ValueError("CSV'de en az bir özellik sütunu olmalı. Yalnızca hedef sütun tespit edildi.")
@@ -3891,9 +3916,9 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
             "num_train_rows": len(train_df),
             "num_test_rows": len(test_df),
             "test_split_pct": test_size,
-            "num_columns": len(df.columns),
+            "num_columns": len(column_types_original),
             "feature_columns": feature_cols_original,
-            "column_types": {col: str(df[col].dtype) for col in df.columns},
+            "column_types": column_types_original,
             "csv_filename": os.path.basename(csv_path),
             "submodels": submodels,
             "best_model": submodels[0]["name"] if submodels else None,
@@ -6147,6 +6172,15 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                     return self.send_json({"error": f"Zaman damgası sütunu '{ts_col}' gönderilen veride bulunamadı"}, 400)
                 if target_col not in hist_df.columns:
                     return self.send_json({"error": f"Hedef sütun '{target_col}' gönderilen veride bulunamadı"}, 400)
+
+                # Clean prediction input (drop empty rows, fill gaps, handle infinities)
+                try:
+                    hist_df, _ = clean_dataframe(hist_df, context="timeseries",
+                                                 timestamp_column=ts_col,
+                                                 item_id_column=id_col if id_col in hist_df.columns else None)
+                except ValueError as e:
+                    return self.send_json({"error": self._safe_error_message(e)}, 400)
+
                 try:
                     hist_df[ts_col] = pd.to_datetime(hist_df[ts_col])
                 except (ValueError, TypeError) as e:
@@ -6404,9 +6438,14 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
 
                 ts_col = meta.get("timestamp_column")
                 id_col = meta.get("item_id_column", "__item_id")
+                target_col = meta.get("target_column", "")
+
+                if target_col and target_col not in input_df.columns:
+                    return self.send_json({"error": f"Hedef sütun '{target_col}' gönderilen veride bulunamadı"}, 400)
 
                 input_df, batch_report = clean_dataframe(
-                    input_df, context="timeseries", timestamp_column=ts_col)
+                    input_df, context="timeseries", timestamp_column=ts_col,
+                    item_id_column=id_col if id_col in input_df.columns else None)
 
                 try:
                     input_df[ts_col] = pd.to_datetime(input_df[ts_col])
@@ -7595,6 +7634,7 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                               "catboost", "gbm", "rf", "xt", "xgb", "lgb", "cat"]
             is_tree_model = any(kw in model_type_str for kw in _tree_keywords)
 
+            _has_categorical = False
             if is_tree_model and not _is_text_model:
                 try:
                     import shap
@@ -7623,10 +7663,17 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                         shap_sample_size = min(100, len(sample_features))
                         shap_sample = sample_features.head(shap_sample_size).copy()
 
-                        # Fill NaN for SHAP (tree models handle NaN but SHAP may not)
-                        for col in shap_sample.columns:
-                            if shap_sample[col].dtype in ['object', 'category']:
-                                shap_sample[col] = pd.factorize(shap_sample[col])[0].astype(float)
+                        # Skip SHAP if categorical columns present — pd.factorize encoding
+                        # doesn't match AutoGluon's internal encoding, producing wrong values
+                        _has_categorical = any(
+                            shap_sample[c].dtype in ['object', 'category']
+                            for c in shap_sample.columns
+                        )
+                        if _has_categorical:
+                            print(f"  [Explain] SHAP skipped: categorical features present (encoding mismatch)")
+                            shap_sample = None
+
+                    if inner_model is not None and shap_sample is not None:
                         shap_sample = shap_sample.fillna(0)
 
                         explainer = shap.TreeExplainer(inner_model)
@@ -7680,7 +7727,10 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             if shap_data:
                 result["shap"] = shap_data
             elif is_tree_model and not _is_text_model:
-                result["shap_note"] = "SHAP analizi bu model için hesaplanamadı (kütüphane eksik veya model tipi desteklenmiyor)"
+                if _has_categorical:
+                    result["shap_note"] = "SHAP analizi kategorik özellik içeren modellerde desteklenmiyor — korelasyon analizini kullanın"
+                else:
+                    result["shap_note"] = "SHAP analizi bu model için hesaplanamadı (kütüphane eksik veya model tipi desteklenmiyor)"
 
             # Correlation analysis
             # For text models, reload original df for correlation since embedding replaced text cols
@@ -7695,7 +7745,19 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                 if col not in corr_df.columns:
                     continue
                 try:
-                    if corr_df[col].dtype in ['object', 'category', 'bool']:
+                    if corr_df[col].dtype == 'bool':
+                        encoded = corr_df[col].astype(float)
+                        if corr_df[target_col].dtype in ['object', 'category']:
+                            target_numeric = pd.factorize(corr_df[target_col])[0].astype(float)
+                            target_numeric[target_numeric == -1] = np.nan
+                        else:
+                            target_numeric = corr_df[target_col].astype(float)
+                        mask = ~(np.isnan(encoded) | np.isnan(target_numeric))
+                        if mask.sum() > 3:
+                            corr = np.corrcoef(encoded[mask], target_numeric[mask])[0, 1]
+                            if not np.isnan(corr):
+                                correlations[col] = round(float(corr), 4)
+                    elif corr_df[col].dtype in ['object', 'category']:
                         encoded = pd.factorize(corr_df[col])[0].astype(float)
                         encoded[encoded == -1] = np.nan
                         if corr_df[target_col].dtype in ['object', 'category']:

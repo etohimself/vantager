@@ -8,7 +8,7 @@ Each entry should be a concise one-liner describing what to skip and why.
 - Default admin password Admin123! with no forced rotation (warning printed to stdout, acceptable for internal tool)
 - Session tokens stored plaintext in sessions.json on disk (filesystem access = game over anyway)
 - Server binds 0.0.0.0 by default (configurable via HOST env var, standard for containerized deployments)
-- No user deletion/deactivation capability for active users (feature gap, not a bug)
+- User deletion now implemented (admin panel "Sil" button)
 - No CSRF token on POST endpoints (mitigated by SameSite=Strict cookies)
 - SameSite cookie not supported in older browsers (irrelevant for internal tool with modern browsers)
 - time.time() used for rate limiting instead of time.monotonic() (NTP jumps negligible for minute/hour windows)
@@ -70,6 +70,14 @@ Each entry should be a concise one-liner describing what to skip and why.
 - CSV row count failure sets total_rows=0 bypassing limit (hard to trigger, upload limit provides real constraint)
 
 - Stale job cleanup double-release of model quota for audio_eval (mitigated by _stale_released flag, microsecond window)
+- No heavy rate limit on /api/examples/audio-zip (normal rate limiter at 60/min, bounded fixed files, internal tool)
+- _serve_example_file reads entire file into memory without size check (admin-controlled directory, not user-uploaded)
+
+## False Positives
+<!-- New from round 2 -->
+- jobId unsanitized in audio predict download href (always server-generated uuid4, only [a-f0-9-])
+- renderExamples hardcoded CSV cards shown when files missing (intentional design, shows "not uploaded yet")
+- downloadExampleFile res.json() on non-JSON error (identical pattern to all download functions, catch block handles)
 
 ## Already Fixed
 - Zip extraction path traversal (added member path validation)
@@ -132,3 +140,14 @@ Each entry should be a concise one-liner describing what to skip and why.
 - handle_update_role loop uses exact match against lowered target_username (added .lower() to u["username"])
 - handle_change_password loop exact match (both sides have original casing from same file, always match)
 - Audio predict status missing queue position (added position field and frontend check)
+- Cloudflare tunnel rate limiter: all users shared 127.0.0.1 IP bucket (added CF-Connecting-IP support)
+- Timeseries clean_dataframe: empty future rows not dropped before ffill/bfill (added all-NaN row filter)
+- Timeseries clean_dataframe: ffill/bfill corrupted item_id column for multi-series (excluded ID/timestamp from fill)
+- Timeseries training: no numeric target validation (added dtype check before fit)
+- Timeseries training: target column NaN ratio not checked independently (added 50% threshold)
+- Single timeseries prediction: skipped all data cleaning (added clean_dataframe call)
+- Batch timeseries prediction: missing target_col validation (added column check)
+- Boolean feature correlation sign inversion via pd.factorize (use astype(float) for bool)
+- SHAP encoding mismatch: pd.factorize codes don't match AutoGluon's internal encoding (skip SHAP for categorical features)
+- Text model column_types metadata built from post-embedding df (save column_types before embedding)
+- Numeric item_id columns not cast to string for AutoGluon TimeSeriesDataFrame (added .astype(str))
