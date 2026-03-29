@@ -168,6 +168,12 @@ def clean_dataframe(df, context="training", timestamp_column=None, item_id_colum
             try:
                 df[timestamp_column] = pd.to_datetime(df[timestamp_column])
                 report["actions_taken"].append(f"'{timestamp_column}' sütunu datetime'a dönüştürüldü")
+                # Drop rows where timestamp became NaT (blank/null cells) — AutoGluon requires non-null timestamps
+                nat_count = df[timestamp_column].isna().sum()
+                if nat_count > 0:
+                    df = df.dropna(subset=[timestamp_column]).reset_index(drop=True)
+                    report["issues_found"].append(f"{nat_count} geçersiz/boş zaman damgası satırı")
+                    report["actions_taken"].append(f"{nat_count} NaT zaman damgası satırı silindi")
             except Exception as e:
                 report["issues_found"].append(f"'{timestamp_column}' datetime dönüşümü başarısız: {e}")
 
@@ -800,9 +806,6 @@ def _atomic_write_json(filepath: Path, data, use_safe_json=False):
         raise
 
 
-_CRITICAL_JSON_FILES = None  # initialized after DATA_DIR is set
-
-
 def _safe_read_json(filepath: Path, default=None):
     """Read JSON with error recovery. Returns default if file missing or corrupt.
     On corruption of CRITICAL files (users, sessions), raises instead of returning
@@ -1146,7 +1149,7 @@ def _ensure_vram_available(needed_mb: int) -> bool:
     if _should_evict_whisper:
         try:
             log.info(f"[VRAM] Pre-evicting Whisper to free VRAM")
-            _unload_whisper_model()
+            _unload_whisper_model(min_idle_seconds=10)
         except Exception:
             pass
 
@@ -2710,6 +2713,27 @@ def update_model_meta_fields(model_id: str, **updates) -> dict:
     return meta
 
 
+def _estimate_model_ram_mb(model_id: str, meta: dict) -> int:
+    """Estimate RAM needed to load a model: use saved measurement, else 2.5× disk size."""
+    saved = meta.get("estimated_ram_mb")
+    if saved and saved > 0:
+        return saved
+    agmodel_dir = MODELS_DIR / model_id / "agmodel"
+    if agmodel_dir.exists():
+        try:
+            disk_bytes = sum(f.stat().st_size for f in agmodel_dir.rglob('*') if f.is_file())
+            disk_mb = disk_bytes / (1024 * 1024)
+            estimated = max(1000, int(disk_mb * 2.5))
+            # Cap: single prediction can't claim more than half total RAM
+            estimated = min(estimated, resource_manager.safe_ram_mb // 2)
+            # Save to metadata so we don't re-scan next time
+            update_model_meta_fields(model_id, estimated_ram_mb=estimated)
+            return estimated
+        except OSError:
+            pass
+    return resource_manager.PROFILES["prediction_model_load"]["ram_mb"]
+
+
 def increment_model_meta_counter(model_id: str, field: str, amount: int = 1) -> dict:
     """Atomically increment a numeric counter on model metadata."""
     with _get_model_lock(model_id):
@@ -3697,6 +3721,7 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
                 visibility: str = "private", timestamp_column: str = None,
                 item_id_column: str = None, prediction_length: int = 10):
     resource_task_id = f"training_{job_id}"
+    _heartbeat_stop = threading.Event()
     if not model_ref_counter.acquire(model_id):
         training_jobs[job_id]["status"] = "error"
         training_jobs[job_id]["error"] = "Model siliniyor, eğitim başlatılamadı."
@@ -3776,6 +3801,12 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
             # Handle item_id: if user has single series, create a dummy ID
             if item_id_column and item_id_column in df.columns:
                 id_col = item_id_column
+                # Drop rows with NaN item_id — astype(str) would convert them to literal "nan",
+                # silently grouping unrelated rows into a junk series
+                _nan_id_count = df[id_col].isna().sum()
+                if _nan_id_count > 0:
+                    df = df.dropna(subset=[id_col]).reset_index(drop=True)
+                    log.warning(f"[TS] Dropped {_nan_id_count} rows with missing item_id")
                 df[id_col] = df[id_col].astype(str)
             else:
                 id_col = "__item_id"
@@ -6353,9 +6384,10 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                 if not _ensure_vram_available(_pred_vram + 300):
                     log.warning(f"[VRAM] Pre-eviction insufficient: needed {_pred_vram + 300}MB")
 
+            _pred_ram = _estimate_model_ram_mb(model_id, meta)
             if not resource_manager.try_acquire(_pred_resource_id, "prediction_model_load",
                                                 vram_mb=_pred_vram,
-                                                ram_mb=resource_manager.PROFILES["prediction_model_load"]["ram_mb"]):
+                                                ram_mb=_pred_ram):
                 return self.send_json({"error": "Sunucu meşgul. Lütfen birkaç saniye bekleyip tekrar deneyin."}, 503)
             _pred_resource_acquired = True
             # ── Time Series prediction path ──
@@ -6602,9 +6634,10 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                 if not _ensure_vram_available(_bp_vram + 300):
                     log.warning(f"[VRAM] Pre-eviction insufficient: needed {_bp_vram + 300}MB")
 
+            _bp_ram = _estimate_model_ram_mb(model_id, meta)
             if not resource_manager.try_acquire(_bpred_resource_id, "prediction_model_load",
                                                 vram_mb=_bp_vram,
-                                                ram_mb=resource_manager.PROFILES["prediction_model_load"]["ram_mb"]):
+                                                ram_mb=_bp_ram):
                 return self.send_json({"error": "Sunucu meşgul. Lütfen birkaç saniye bekleyip tekrar deneyin."}, 503)
             _bp_resource_acquired = True
             if "multipart/form-data" in content_type:
