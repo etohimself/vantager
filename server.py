@@ -4778,13 +4778,16 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         return user
 
     def _get_client_ip(self):
-        if _TRUSTED_PROXY_IPS:
-            peer_ip = self.client_address[0]
-            if peer_ip in _TRUSTED_PROXY_IPS:
-                forwarded = self.headers.get("X-Forwarded-For", "")
-                if forwarded:
-                    return forwarded.split(",")[0].strip()
-        return self.client_address[0]
+        # Cloudflare Tunnel: always trust CF-Connecting-IP from localhost
+        peer_ip = self.client_address[0]
+        if peer_ip in ("127.0.0.1", "::1") or peer_ip in _TRUSTED_PROXY_IPS:
+            cf_ip = self.headers.get("CF-Connecting-IP", "")
+            if cf_ip:
+                return cf_ip.strip()
+            forwarded = self.headers.get("X-Forwarded-For", "")
+            if forwarded:
+                return forwarded.split(",")[0].strip()
+        return peer_ip
 
     def _require_admin(self) -> dict:
         """Require admin role."""
