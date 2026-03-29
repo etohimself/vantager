@@ -203,7 +203,15 @@ def clean_dataframe(df, context="training", timestamp_column=None, item_id_colum
                 f"Veri setinde çok fazla eksik değer var ({pre_fill_ratio:.0%}). "
                 f"Zaman serisi analizi için daha yoğun veri gerekiyor."
             )
-        df[fill_cols] = df[fill_cols].ffill().bfill()
+        # Sort chronologically before fill to prevent future→past leakage
+        if timestamp_column and timestamp_column in df.columns:
+            sort_cols = [item_id_column, timestamp_column] if (item_id_column and item_id_column in df.columns) else [timestamp_column]
+            df = df.sort_values(by=sort_cols).reset_index(drop=True)
+        # Group by item_id to prevent cross-series contamination
+        if item_id_column and item_id_column in df.columns:
+            df[fill_cols] = df.groupby(item_id_column)[fill_cols].transform(lambda x: x.ffill().bfill())
+        else:
+            df[fill_cols] = df[fill_cols].ffill().bfill()
         nan_after = df[fill_cols].isna().sum().sum() if fill_cols else 0
         filled_count = nan_before - nan_after
         if filled_count > 0:
@@ -226,17 +234,19 @@ def clean_dataframe(df, context="training", timestamp_column=None, item_id_colum
         return df, report
 
     # ── Standard tabular cleaning ──
-    empty_rows = df.isna().all(axis=1).sum()
-    if empty_rows > 0:
-        df = df.dropna(how='all')
-        report["issues_found"].append(f"{empty_rows} tamamen boş satır")
-        report["actions_taken"].append(f"{empty_rows} boş satır silindi")
+    # Only drop empty rows/columns during training — prediction must preserve 1:1 row alignment
+    if context != "prediction":
+        empty_rows = df.isna().all(axis=1).sum()
+        if empty_rows > 0:
+            df = df.dropna(how='all')
+            report["issues_found"].append(f"{empty_rows} tamamen boş satır")
+            report["actions_taken"].append(f"{empty_rows} boş satır silindi")
 
-    empty_cols = df.columns[df.isna().all()].tolist()
-    if empty_cols:
-        df = df.drop(columns=empty_cols)
-        report["issues_found"].append(f"{len(empty_cols)} boş sütun: {empty_cols}")
-        report["actions_taken"].append(f"{len(empty_cols)} boş sütun silindi")
+        empty_cols = df.columns[df.isna().all()].tolist()
+        if empty_cols:
+            df = df.drop(columns=empty_cols)
+            report["issues_found"].append(f"{len(empty_cols)} boş sütun: {empty_cols}")
+            report["actions_taken"].append(f"{len(empty_cols)} boş sütun silindi")
 
     if context == "training":
         dup_count = df.duplicated().sum()
@@ -894,8 +904,9 @@ class ResourceManager:
                 pass
 
         if not _cgroup_cpu_applied and _host_cpu_count > 16:
-            log.warning(f"[ResourceManager] Could not read cgroup CPU limits — using host count ({_host_cpu_count}). "
-                        f"If running in Docker, this may over-allocate CPUs.")
+            self.cpu_count = min(_host_cpu_count, 16)  # Hard cap when cgroup detection fails
+            log.warning(f"[ResourceManager] Could not read cgroup CPU limits — capping to {self.cpu_count} "
+                        f"(host has {_host_cpu_count}). Set TRAINING_CPU_COUNT env var to override.")
         if not _cgroup_ram_applied and self.total_ram_mb > 32000:
             log.warning(f"[ResourceManager] Could not read cgroup memory limits — using host RAM ({self.total_ram_mb}MB). "
                         f"If running in Docker, this may cause OOM kills.")
@@ -4423,9 +4434,12 @@ def _call_llm(messages: list, max_attempts: int = 2) -> dict:
             log.warning(f"  [LLM] Attempt {attempt}/{max_attempts}: HTTP {status_code} — {e}")
             if status_code < 500 and status_code != 429:
                 raise  # Don't retry 4xx client errors (except 429 rate limit)
-        except (http_requests.exceptions.ConnectionError,
-                http_requests.exceptions.Timeout,
+        except (http_requests.exceptions.Timeout,
                 http_requests.exceptions.ReadTimeout) as e:
+            last_error = e
+            log.warning(f"  [LLM] Attempt {attempt}/{max_attempts}: timeout — {e}. Not retrying (server is overloaded).")
+            break  # Don't retry on timeout — piling requests onto a slow LLM makes it worse
+        except http_requests.exceptions.ConnectionError as e:
             last_error = e
             log.warning(f"  [LLM] Attempt {attempt}/{max_attempts}: connection error — {e}")
         except Exception as e:
