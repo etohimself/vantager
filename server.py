@@ -128,6 +128,11 @@ def safe_json_dumps(data, **kwargs):
 
 def _read_csv_with_fallback(csv_path, **kwargs):
     """Read CSV with encoding fallback: try utf-8-sig first, then detect encoding."""
+    # Reject binary files disguised as CSV (latin-1 accepts any byte sequence)
+    with open(csv_path, "rb") as f:
+        head = f.read(4096)
+    if b'\x00' in head:
+        raise ValueError("Dosya bir metin/CSV dosyası değil (ikili veri algılandı). Lütfen geçerli bir CSV yükleyin.")
     try:
         return pd.read_csv(csv_path, encoding='utf-8-sig', **kwargs)
     except UnicodeDecodeError:
@@ -928,9 +933,14 @@ class ResourceManager:
             self.cpu_count = min(_host_cpu_count, 16)  # Hard cap when cgroup detection fails
             log.warning(f"[ResourceManager] Could not read cgroup CPU limits — capping to {self.cpu_count} "
                         f"(host has {_host_cpu_count}). Set TRAINING_CPU_COUNT env var to override.")
-        if not _cgroup_ram_applied and self.total_ram_mb > 32000:
+        # Allow manual override via env var (essential for vast.ai where cgroups may lie)
+        _env_ram = os.environ.get("MAX_RAM_MB")
+        if _env_ram:
+            self.total_ram_mb = int(_env_ram)
+            log.info(f"[ResourceManager] RAM override from MAX_RAM_MB env: {self.total_ram_mb}MB")
+        elif not _cgroup_ram_applied and self.total_ram_mb > 32000:
             log.warning(f"[ResourceManager] Could not read cgroup memory limits — using host RAM ({self.total_ram_mb}MB). "
-                        f"If running in Docker, this may cause OOM kills.")
+                        f"Set MAX_RAM_MB env var to override.")
 
         # Reserve cores for HTTP server + system — training gets the rest
         self.training_cpu_count = max(1, self.cpu_count - 2)
@@ -2753,8 +2763,10 @@ def get_filtered_activity(user: dict) -> list:
     is_admin = user.get("role") in ("admin", "master_admin")
     if is_admin:
         return activity
-    # Regular users: see public activities + old entries without visibility field (backward compat)
-    return [a for a in activity if a.get("visibility", "public") == "public"]
+    # Regular users: see public activities + their own + old entries without visibility field
+    username = user.get("username", "")
+    return [a for a in activity
+            if a.get("visibility", "public") == "public" or a.get("username") == username]
 
 
 _all_models_cache = {"data": None, "ts": 0, "gen": 0}
