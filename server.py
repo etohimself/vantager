@@ -2931,7 +2931,10 @@ def _tree_to_case_when(tree_dict: dict, feature_names: list, node_id: int = 0, _
         val = values[node_id]
         if hasattr(val, '__len__'):
             if len(val.shape) > 1:
-                v = float(val.argmax())
+                if val.shape[-1] == 1:
+                    v = float(val.flat[0])
+                else:
+                    v = float(val.argmax())
             else:
                 v = float(val[0])
         else:

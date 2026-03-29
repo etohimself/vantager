@@ -124,3 +124,4 @@ Each entry should be a concise one-liner describing what to skip and why.
 - audio_predict_pipeline updated_meta["name"] KeyError on corrupt meta (changed to .get())
 - CORS preflight advertises PUT/DELETE but no handlers exist (removed from allowed methods)
 - Audio eval/predict pipeline temp file leak on model_ref_counter.acquire failure (added cleanup before early return)
+- sklearn tree SQL val.argmax() returns 0 for regression instead of leaf value (added shape check, use val.flat[0] for regression)
