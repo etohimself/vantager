@@ -311,6 +311,11 @@ os.environ["AG_AUTOMM_NUM_WORKERS"] = "0"
 os.environ["AG_AUTOMM_NUM_WORKERS_EVALUATION"] = "0"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ.setdefault("RAY_USE_MULTIPROCESSING_CPU_COUNT", "1")  # Fix Ray CPU detection in containers
+# Cap low-level thread pools to prevent host CPU count from spawning excessive threads in containers
+os.environ.setdefault("OMP_NUM_THREADS", "4")
+os.environ.setdefault("MKL_NUM_THREADS", "4")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "4")
+os.environ.setdefault("NUMEXPR_MAX_THREADS", "4")
 
 # ── AutoGluon imports ──────────────────────────────────────────────
 try:
@@ -597,7 +602,10 @@ def _embedding_cache_evictor():
 threading.Thread(target=_embedding_cache_evictor, daemon=True, name="embedding-evictor").start()
 
 
-def _embed_text_columns(df, text_columns, model_name=None, batch_size=256, show_progress=True):
+def _embed_text_columns(df, text_columns, model_name=None, batch_size=None, show_progress=True):
+    if batch_size is None:
+        # Scale batch size to available RAM (each batch ~100MB for 384-dim model)
+        batch_size = min(256, max(16, resource_manager.safe_ram_mb // 100))
     """Convert text columns into dense embedding features using a sentence-transformer.
 
     For each text column, generates N embedding dimensions (e.g. 384 for MiniLM).
@@ -810,7 +818,6 @@ class ResourceManager:
             import psutil
             self.total_ram_mb = psutil.virtual_memory().total // (1024 * 1024)
         except ImportError:
-            # Fallback: read /proc/meminfo on Linux
             try:
                 with open("/proc/meminfo") as f:
                     for line in f:
@@ -818,10 +825,36 @@ class ResourceManager:
                             self.total_ram_mb = int(line.split()[1]) // 1024
                             break
             except (OSError, ValueError):
-                self.total_ram_mb = 8192  # conservative default
+                self.total_ram_mb = 8192
+
+        # Apply Docker/cgroup memory limit (psutil and /proc/meminfo return host RAM)
+        _cgroup_ram_applied = False
+        try:
+            # cgroup v2
+            with open("/sys/fs/cgroup/memory.max") as f:
+                val = f.read().strip()
+                if val != "max":
+                    cgroup_ram = int(val) // (1024 * 1024)
+                    if cgroup_ram > 0:
+                        self.total_ram_mb = min(self.total_ram_mb, cgroup_ram)
+                        _cgroup_ram_applied = True
+        except (OSError, ValueError):
+            try:
+                # cgroup v1
+                with open("/sys/fs/cgroup/memory/memory.limit_in_bytes") as f:
+                    limit = int(f.read().strip())
+                    if limit < 9 * 10**18:  # not "unlimited" sentinel
+                        cgroup_ram = limit // (1024 * 1024)
+                        if cgroup_ram > 0:
+                            self.total_ram_mb = min(self.total_ram_mb, cgroup_ram)
+                            _cgroup_ram_applied = True
+            except (OSError, ValueError):
+                pass
 
         # Detect effective CPU count (respects Docker/cgroup limits)
-        self.cpu_count = os.cpu_count() or 4
+        _host_cpu_count = os.cpu_count() or 4
+        self.cpu_count = _host_cpu_count
+        _cgroup_cpu_applied = False
         try:
             # cgroup v2
             with open("/sys/fs/cgroup/cpu.max") as f:
@@ -830,6 +863,7 @@ class ResourceManager:
                     quota, period = int(parts[0]), int(parts[1])
                     cgroup_cpus = max(1, quota // period)
                     self.cpu_count = min(self.cpu_count, cgroup_cpus)
+                    _cgroup_cpu_applied = True
         except (OSError, ValueError, IndexError):
             try:
                 # cgroup v1
@@ -840,8 +874,17 @@ class ResourceManager:
                     if quota > 0:
                         cgroup_cpus = max(1, quota // period)
                         self.cpu_count = min(self.cpu_count, cgroup_cpus)
+                        _cgroup_cpu_applied = True
             except (OSError, ValueError):
                 pass
+
+        if not _cgroup_cpu_applied and _host_cpu_count > 16:
+            log.warning(f"[ResourceManager] Could not read cgroup CPU limits — using host count ({_host_cpu_count}). "
+                        f"If running in Docker, this may over-allocate CPUs.")
+        if not _cgroup_ram_applied and self.total_ram_mb > 32000:
+            log.warning(f"[ResourceManager] Could not read cgroup memory limits — using host RAM ({self.total_ram_mb}MB). "
+                        f"If running in Docker, this may cause OOM kills.")
+
         # Reserve cores for HTTP server + system — training gets the rest
         self.training_cpu_count = max(1, self.cpu_count - 2)
 
@@ -1966,6 +2009,11 @@ def _start_bundled_llama():
 
     # LD_LIBRARY_PATH for shared libs (Linux)
     env = os.environ.copy()
+    # Cap subprocess thread pools to container CPU count (not host)
+    _llama_threads = str(min(8, resource_manager.cpu_count))
+    env["OMP_NUM_THREADS"] = _llama_threads
+    env["MKL_NUM_THREADS"] = _llama_threads
+    env["OPENBLAS_NUM_THREADS"] = _llama_threads
     bin_dir = str(Path(bin_path).parent)
     lib_dir = str(Path(bin_path).parent.parent / "lib")
     if sys.platform != "win32" and os.path.isdir(lib_dir):
@@ -1989,6 +2037,7 @@ def _start_bundled_llama():
         "--ctx-size", LLAMA_CTX_SIZE,
         "--batch-size", LLAMA_BATCH_SIZE,
         "--ubatch-size", LLAMA_UBATCH_SIZE,
+        "--threads", str(min(8, resource_manager.cpu_count)),
         "--port", str(port),
         "--chat-template-kwargs", '{"enable_thinking":false}',
     ]
@@ -4048,7 +4097,9 @@ def _get_whisper_model():
                 else:  # "auto" — check what ctranslate2 can actually see
                     try:
                         import ctranslate2
-                        whisper_uses_gpu = ctranslate2.get_cuda_device_count() > 0
+                        # Only trust ct2 GPU detection if we also confirmed VRAM exists
+                        whisper_uses_gpu = (ctranslate2.get_cuda_device_count() > 0
+                                            and resource_manager.total_vram_mb > 0)
                     except Exception:
                         whisper_uses_gpu = False
 
