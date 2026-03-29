@@ -820,9 +820,30 @@ class ResourceManager:
             except (OSError, ValueError):
                 self.total_ram_mb = 8192  # conservative default
 
+        # Detect effective CPU count (respects Docker/cgroup limits)
         self.cpu_count = os.cpu_count() or 4
+        try:
+            # cgroup v2
+            with open("/sys/fs/cgroup/cpu.max") as f:
+                parts = f.read().strip().split()
+                if parts[0] != "max":
+                    quota, period = int(parts[0]), int(parts[1])
+                    cgroup_cpus = max(1, quota // period)
+                    self.cpu_count = min(self.cpu_count, cgroup_cpus)
+        except (OSError, ValueError, IndexError):
+            try:
+                # cgroup v1
+                with open("/sys/fs/cgroup/cpu/cpu.cfs_quota_us") as fq, \
+                     open("/sys/fs/cgroup/cpu/cpu.cfs_period_us") as fp:
+                    quota = int(fq.read().strip())
+                    period = int(fp.read().strip())
+                    if quota > 0:
+                        cgroup_cpus = max(1, quota // period)
+                        self.cpu_count = min(self.cpu_count, cgroup_cpus)
+            except (OSError, ValueError):
+                pass
         # Reserve cores for HTTP server + system — training gets the rest
-        self.training_cpu_count = max(1, self.cpu_count - 4)
+        self.training_cpu_count = max(1, self.cpu_count - 2)
 
         # ── Compute safe budgets ──
         self.safe_vram_mb = int(self.total_vram_mb * (1.0 - self._vram_safety))
