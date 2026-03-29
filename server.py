@@ -3660,6 +3660,14 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
 
         training_jobs.update_fields(job_id, status="training")
 
+        # Keep heartbeat alive during blocking fit() calls to prevent stale-job cleanup
+        _heartbeat_stop = threading.Event()
+        def _heartbeat_loop():
+            while not _heartbeat_stop.wait(timeout=120):
+                training_jobs.update_fields(job_id, _heartbeat="alive")
+        _heartbeat_thread = threading.Thread(target=_heartbeat_loop, daemon=True, name=f"hb-{job_id[:8]}")
+        _heartbeat_thread.start()
+
         try:
             df = _read_csv_with_fallback(csv_path)
         except Exception as e:
@@ -4100,6 +4108,8 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
         except OSError:
             pass
     finally:
+        # Stop heartbeat thread
+        _heartbeat_stop.set()
         # Free GPU memory before releasing resource tracking
         try:
             import torch
@@ -4374,8 +4384,9 @@ def _ensure_llama_running():
             _llama_restart_event.set()
         return
 
-    # Wait for the restarting thread to finish
-    _llama_restart_event.wait(timeout=130)
+    # Don't block HTTP threads waiting for restart — fail fast with 503
+    if not _llama_restart_event.wait(timeout=5):
+        raise RuntimeError("LLM yeniden başlatılıyor, lütfen birkaç saniye sonra tekrar deneyin.")
 
 
 def _call_llm(messages: list, max_attempts: int = 2) -> dict:
