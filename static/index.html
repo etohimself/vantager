@@ -2092,7 +2092,8 @@
                             <td class="font-mono text-sm text-slate-500">${(isTS || model.task_type === 'regression') ? (sm.score_internal || 0).toFixed(2) : '%' + ((sm.score_internal || 0) * 100).toFixed(1)}${ofFlag}</td>
                             <td>${autoTag}</td>
                             <td class="text-right" onclick="event.stopPropagation()">
-                                <button class="btn-export btn-sm" onclick="navigate('/model/${escAttr(modelId)}/export/${encodeURIComponent(sm.name)}')">Kullan</button>
+                                <button class="btn-primary btn-sm" onclick="navigate('/model/${escAttr(modelId)}/predict/${encodeURIComponent(sm.name)}')">Kullan</button>
+                                <button class="btn-export btn-sm" onclick="navigate('/model/${escAttr(modelId)}/export/${encodeURIComponent(sm.name)}')">Raporlara Ekle</button>
                             </td>
                         </tr>`;
                     }).join('')}
@@ -2181,7 +2182,7 @@
                         \u00b7 Hedef: <span class="font-mono text-slate-700">${esc(model.target_column)}</span>
                     </p>
                 </div>
-                <button class="btn-export btn-sm" onclick="navigate('/model/${escAttr(modelId)}/export/${encodeURIComponent(submodelName)}')">Kullan</button>
+                <button class="btn-export btn-sm" onclick="navigate('/model/${escAttr(modelId)}/export/${encodeURIComponent(submodelName)}')">Raporlara Ekle</button>
             </div>
 
             <div class="flex gap-1 mb-6 p-1 rounded-xl bg-slate-100">
