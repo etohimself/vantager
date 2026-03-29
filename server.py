@@ -215,6 +215,15 @@ def clean_dataframe(df, context="training", timestamp_column=None, item_id_colum
             df[fill_cols] = df[fill_cols].ffill().bfill()
         # Convert any remaining object columns that became mixed-type after fill
         df[fill_cols] = df[fill_cols].infer_objects()
+        # Fill any remaining NaN (e.g. entire series missing a column) with column median/0
+        remaining_nan = df[fill_cols].isna().sum()
+        still_nan_cols = remaining_nan[remaining_nan > 0].index.tolist()
+        if still_nan_cols:
+            numeric_fill = df[still_nan_cols].select_dtypes(include=[np.number]).columns
+            for col in numeric_fill:
+                median_val = df[col].median()
+                df[col] = df[col].fillna(median_val if pd.notna(median_val) else 0)
+            report["actions_taken"].append(f"{len(still_nan_cols)} sütunda kalan NaN değerler medyan ile dolduruldu")
         nan_after = df[fill_cols].isna().sum().sum() if fill_cols else 0
         filled_count = nan_before - nan_after
         if filled_count > 0:
@@ -308,7 +317,16 @@ def clean_prediction_input(features_dict, column_types):
                 else:
                     cleaned[key] = val
             except (ValueError, TypeError):
-                cleaned[key] = np.nan
+                # Handle Turkish/European decimal format: "3,14" or "1.250,50"
+                try:
+                    s = str(value).strip()
+                    if ',' in s:
+                        # "1.250,50" → "1250.50" or "3,14" → "3.14"
+                        s = s.replace('.', '').replace(',', '.')
+                    val = float(s)
+                    cleaned[key] = np.nan if (math.isnan(val) or math.isinf(val)) else val
+                except (ValueError, TypeError):
+                    cleaned[key] = np.nan
         else:
             cleaned[key] = value
     return cleaned
@@ -1421,6 +1439,32 @@ def _startup_cleanup():
                         pass
         if orphans:
             log.info(f"[Cleanup] Removed {orphans} orphan model directories (no meta.json)")
+
+
+def _periodic_temp_cleanup():
+    """Background thread: clean stale temp dirs every hour (survives segfaults)."""
+    while True:
+        time.sleep(3600)
+        try:
+            temp_base = DATA_DIR / "temp"
+            if not temp_base.exists():
+                continue
+            now = time.time()
+            cleaned = 0
+            for d in temp_base.iterdir():
+                if d.is_dir():
+                    try:
+                        if (now - d.stat().st_mtime) / 3600 > 2:
+                            shutil.rmtree(d, ignore_errors=True)
+                            cleaned += 1
+                    except OSError:
+                        pass
+            if cleaned:
+                log.info(f"[Cleanup] Periodic: removed {cleaned} stale temp dirs (>2h old)")
+        except Exception:
+            pass
+
+threading.Thread(target=_periodic_temp_cleanup, daemon=True, name="temp-cleaner").start()
 
 
 def _cleanup_temp_dir(temp_id: str):
