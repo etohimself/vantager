@@ -3121,7 +3121,8 @@
                                         ${canChangeRole ? `<select class="input-field text-xs py-1 px-2" style="width:auto;" onchange="updateUserRole('${escAttr(u.username)}', this.value)">
                                             <option value="user" ${u.role === 'user' ? 'selected' : ''}>Kullan\u0131c\u0131</option>
                                             <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Y\u00f6netici</option>
-                                        </select>` : ''}
+                                        </select>
+                                        <button class="btn-danger-sm ml-1" onclick="deleteUser('${escAttr(u.username)}')">Sil</button>` : ''}
                                     </td>
                                 </tr>`;
                             }).join('')}
@@ -3206,6 +3207,13 @@
     async function rejectUser(username) {
         if (!confirm(username + ' kullan\u0131c\u0131s\u0131n\u0131n ba\u015fvurusunu reddetmek istedi\u011finize emin misiniz?')) return;
         const res = await api('/api/admin/reject-user', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username }) });
+        if (res.success) renderAdmin();
+        else alert(res.error || 'Bir sorun olu\u015ftu');
+    }
+
+    async function deleteUser(username) {
+        if (!confirm(username + ' kullan\u0131c\u0131s\u0131n\u0131 kal\u0131c\u0131 olarak silmek istedi\u011finize emin misiniz?')) return;
+        const res = await api('/api/admin/delete-user', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username }) });
         if (res.success) renderAdmin();
         else alert(res.error || 'Bir sorun olu\u015ftu');
     }

@@ -5110,6 +5110,9 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         elif path == "/api/admin/reject-user":
             return self.handle_reject_user(body)
 
+        elif path == "/api/admin/delete-user":
+            return self.handle_delete_user(body)
+
         return self.send_json({"error": "Bulunamadı"}, 404)
 
     # ── Auth Handlers ───────────────────────────────────────
@@ -5492,6 +5495,32 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             save_users(users)
         add_activity("user_rejected", details=f"Kayıt talebi reddedildi: {username}", username=admin["username"])
         self.send_json({"success": True, "message": f"'{username}' kullanıcısının başvurusu reddedildi"})
+
+    def handle_delete_user(self, body):
+        admin = self._require_admin()
+        if not admin: return
+        try:
+            data = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
+            return self.send_json({"error": "Geçersiz istek"}, 400)
+        if not isinstance(data, dict):
+            return self.send_json({"error": "JSON nesnesi bekleniyor"}, 400)
+        username = data.get("username", "").strip().lower()
+        if not username:
+            return self.send_json({"error": "Kullanıcı adı gerekli"}, 400)
+        if username == admin["username"]:
+            return self.send_json({"error": "Kendi hesabınızı silemezsiniz"}, 400)
+        with _file_locks["users"]:
+            users = load_users()
+            target = next((u for u in users if u["username"] == username), None)
+            if not target:
+                return self.send_json({"error": "Kullanıcı bulunamadı"}, 404)
+            if target.get("role") == "master_admin":
+                return self.send_json({"error": "Ana yönetici silinemez"}, 403)
+            users = [u for u in users if u["username"] != username]
+            save_users(users)
+        add_activity("user_deleted", details=f"Kullanıcı silindi: {username}", username=admin["username"])
+        self.send_json({"success": True, "message": f"'{username}' kullanıcısı silindi"})
 
     def handle_pending_users(self):
         admin = self._require_admin()
