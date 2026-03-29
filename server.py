@@ -4627,7 +4627,7 @@ def audio_predict_pipeline(job_id: str, model_id: str,
 
         # Update model prediction count atomically
         updated_meta = increment_model_meta_counter(model_id, "total_predictions", len(audio_files))
-        model_display_name = updated_meta["name"] if updated_meta else model_id
+        model_display_name = updated_meta.get("name", model_id) if updated_meta else model_id
 
         add_activity("audio_predicted", model_id, model_display_name,
                      f"{len(audio_files)} ses dosyası ile tahmin yapıldı",
@@ -4845,7 +4845,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         if origin:
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
             if self._cors_allowed and self._cors_allowed != "*":
                 self.send_header("Access-Control-Allow-Credentials", "true")
@@ -6914,7 +6914,9 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                         # Strengths (STL-style): F_t = 1 - Var(R) / Var(T+R), F_s = 1 - Var(R) / Var(S+R)
                         var_resid = resid_comp.var()
                         var_trend_resid = (trend_comp.values + resid_comp.values[:len(trend_comp)]).var() if len(trend_comp) > 0 else 1.0
-                        var_season_resid = (seasonal_comp.values[:len(resid_comp)] + resid_comp.values).var() if len(resid_comp) > 0 else 1.0
+                        # Align seasonal with resid by index (seasonal has full range, resid has edges trimmed)
+                        common_idx = seasonal_comp.index.intersection(resid_comp.index)
+                        var_season_resid = (seasonal_comp.loc[common_idx].values + resid_comp.loc[common_idx].values).var() if len(common_idx) > 0 else 1.0
 
                         trend_strength = max(0.0, float(1.0 - var_resid / var_trend_resid)) if var_trend_resid > 0 else 0.0
                         seasonal_strength = max(0.0, float(1.0 - var_resid / var_season_resid)) if var_season_resid > 0 else 0.0

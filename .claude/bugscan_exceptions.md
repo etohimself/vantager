@@ -61,6 +61,9 @@ Each entry should be a concise one-liner describing what to skip and why.
 - Non-atomic job status+error dict updates (microsecond window, next poll correct)
 - handle_predict_batch doesn't validate rows is a list (caught by outer exception handler)
 - Early auth check for large uploads doesn't enforce API rate limit (upload semaphore limits to 5)
+- ACF max_lag negative with few data points (len(y)>=10 ensures max_lag>=4)
+- Overfit warning never shown for regression (by design, different scales)
+- Cost estimation hardcoded sample_size=100 (cost estimation is inherently approximate)
 
 ## Already Fixed
 - Zip extraction path traversal (added member path validation)
@@ -114,3 +117,6 @@ Each entry should be a concise one-liner describing what to skip and why.
 - Timeseries explainability NaT index crash on isoformat() (added pd.notna guard)
 - Overfit warning never shown for timeseries models (enabled with score-score_internal formula)
 - Blank CSV lines create ghost rows in timeseries predictions (added empty line filter)
+- Seasonal decomposition seasonal+resid positional misalignment (fixed with index intersection)
+- audio_predict_pipeline updated_meta["name"] KeyError on corrupt meta (changed to .get())
+- CORS preflight advertises PUT/DELETE but no handlers exist (removed from allowed methods)
