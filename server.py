@@ -137,7 +137,8 @@ def _read_csv_with_fallback(csv_path, **kwargs):
                 return pd.read_csv(csv_path, encoding=enc, **kwargs)
             except (UnicodeDecodeError, Exception):
                 continue
-        # Last resort: lossy read
+        # Last resort: lossy read — undecodable bytes become U+FFFD
+        log.warning(f"[CSV] All encoding attempts failed for {csv_path} — using lossy UTF-8 (data may contain replacement characters)")
         return pd.read_csv(csv_path, encoding='utf-8', errors='replace', **kwargs)
 
 
@@ -6263,6 +6264,10 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                     return self.send_json({
                         "error": "Zaman serisi tahmini için 'history' (geçmiş veri satırları) gerekli"
                     }, 400)
+                if len(history_rows) > MAX_BATCH_ROWS:
+                    return self.send_json({
+                        "error": f"Geçmiş veri çok büyük ({len(history_rows):,} satır). Maksimum: {MAX_BATCH_ROWS:,}"
+                    }, 413)
 
                 ts_col = meta.get("timestamp_column")
                 id_col = meta.get("item_id_column", "__item_id")
@@ -8035,6 +8040,9 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         if not audio_files_parts:
             release_model_quota(_username)
             return self.send_json({"error": "En az bir ses dosyası yüklenmeli"}, 400)
+        if len(audio_files_parts) > 50:
+            release_model_quota(_username)
+            return self.send_json({"error": f"Tek seferde en fazla 50 ses dosyası yüklenebilir ({len(audio_files_parts)} gönderildi)"}, 413)
 
         # Validate individual audio file sizes
         for af in audio_files_parts:
@@ -8197,6 +8205,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
         audio_files_parts = parts.get("_files_audio_files", [])
         if not audio_files_parts:
             return self.send_json({"error": "En az bir ses dosyası yüklenmeli"}, 400)
+        if len(audio_files_parts) > 50:
+            return self.send_json({"error": f"Tek seferde en fazla 50 ses dosyası yüklenebilir ({len(audio_files_parts)} gönderildi)"}, 413)
 
         # Validate individual audio file sizes
         for af in audio_files_parts:
