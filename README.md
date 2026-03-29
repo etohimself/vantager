@@ -1,87 +1,147 @@
-# Tahmin Platformu
+# Vantager
 
-**Internal ML prediction platform for tabular, time series, NLP, and audio tasks.**
-Built with AutoGluon, faster-whisper, sentence-transformers, and a bundled LLM — all served from a single Python process.
+**No-code machine learning platform for tabular, time series, NLP, and call audio analysis.**
 
-![Python 3.11](https://img.shields.io/badge/python-3.11-blue?logo=python&logoColor=white)
-![CUDA 12.4](https://img.shields.io/badge/CUDA-12.4-76B900?logo=nvidia&logoColor=white)
+Upload a CSV or audio files, pick a target, and get a trained model with predictions, explainability, and export options — all from your browser. Built with AutoGluon, faster-whisper, sentence-transformers, and a bundled LLM, served from a single Python process.
+
+![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue?logo=python&logoColor=white)
+![CUDA 12.x](https://img.shields.io/badge/CUDA-12.x-76B900?logo=nvidia&logoColor=white)
 ![License](https://img.shields.io/badge/license-proprietary-gray)
 
 ---
 
-## What It Does
+## Features
 
 | Capability | Engine | GPU? |
 |---|---|---|
-| **Tabular prediction** — classification & regression on CSV data | AutoGluon Tabular | Optional |
+| **Classification** — categorical prediction on CSV data | AutoGluon Tabular | Optional |
+| **Regression** — numerical prediction on CSV data | AutoGluon Tabular | Optional |
 | **Time series forecasting** — multi-step ahead predictions | AutoGluon TimeSeries | Optional |
-| **NLP / text embeddings** — text classification via embeddings | sentence-transformers | Optional |
-| **Speech-to-text** — audio transcription & call analysis | faster-whisper (CTranslate2) | Recommended |
-| **LLM assistant** — natural language model explanations | Bundled llama.cpp (Qwen 3.5 4B) | Recommended |
+| **Text classification** — NLP via sentence embeddings | sentence-transformers | Optional |
+| **Call audio analysis** — transcription + schema-based evaluation | faster-whisper + LLM | Recommended |
+| **LLM explanations** — natural language model insights | Bundled llama.cpp (Qwen 3.5 4B) | Recommended |
+| **Model export** — Airflow DAG or MSSQL stored procedure generation | Built-in | No |
 
-All features are accessible through a single web UI at `http://localhost:8080`.
+Additional platform features:
+
+- **Multi-user with roles** — admin approval flow, per-user quotas, RBAC
+- **Fair job queue** — 1 training + 1 audio job per user, automatic queuing
+- **Resource management** — VRAM/RAM budgeting, automatic model caching & eviction
+- **Explainability** — SHAP feature importance, correlation analysis, seasonal decomposition
+- **Batch prediction** — upload a CSV and get predictions for all rows
+- **Example datasets** — built-in sample datasets for every task type to get started quickly
 
 ---
 
 ## Quick Start
 
+### 1. Clone and install
+
 ```bash
-git clone git@github.com:etohimself/vantager.git
+git clone https://github.com/etohimself/vantager.git
 cd vantager
 
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+python3 -m venv .venv
+source .venv/bin/activate        # Linux/Mac
+# .venv\Scripts\activate         # Windows
 
+pip install -r requirements.txt
+```
+
+### 2. Configure
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` — at minimum, change the admin password:
+
+```env
+ADMIN_USER=admin
+ADMIN_PASSWORD=YourSecurePassword123!
+```
+
+All other settings have sensible defaults. See [Configuration](#configuration) below for the full list.
+
+### 3. Run
+
+**Linux/Mac:**
+```bash
+chmod +x start.sh
+./start.sh
+```
+
+**Windows:**
+```
+start.bat
+```
+
+**Or directly:**
+```bash
 python server.py
 ```
 
-Open **http://localhost:8080** and log in with `admin` / `Admin123!`.
+Open **http://localhost:8080** and log in with your admin credentials.
 
-> Set `ADMIN_PASSWORD` env var in production.
+---
+
+## Example Datasets
+
+The `example/` directory contains ready-to-use sample datasets for every task type:
+
+| File | Task Type | Description |
+|---|---|---|
+| `iris_flower.csv` | Classification | Classic 3-class iris flower species dataset |
+| `house_pricing.csv` | Regression | House features to price prediction |
+| `air_passengers.csv` | Time Series | Monthly airline passenger counts (1949-1960) |
+| `*_callcenter.mp3` | Call Audio Analysis | 50 real call center audio recordings |
+
+These are accessible from the **Ornek Veriler** (Example Datasets) page in the web UI, where you can:
+
+- Download CSV datasets individually
+- Play audio files directly in the browser
+- Download audio files individually or all at once as a ZIP
+
+To add your own example files, simply drop `.csv` or `.mp3` files into the `example/` folder — they appear automatically.
 
 ---
 
 ## Deploy on a GPU Instance
 
-This works on any GPU instance (Vast.ai, RunPod, Lambda, bare-metal, etc.)
+Works on any GPU instance (Vast.ai, RunPod, Lambda, bare-metal, etc.)
 
-### 1. First-time setup on the instance
+### First-time setup
 
 ```bash
-# Clone the repo
-git clone git@github.com:etohimself/vantager.git
+git clone https://github.com/etohimself/vantager.git
 cd vantager
 
-# Create virtualenv and install deps
-python3.11 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# (Optional) Set environment variables
-export ADMIN_PASSWORD=YourSecurePassword
-export DATA_DIR=/workspace/data        # or wherever you want persistent data
+cp .env.example .env
+# Edit .env: set ADMIN_PASSWORD, DATA_DIR, etc.
 
-# Start
 chmod +x start.sh
 ./start.sh
 ```
 
-### 2. Updating (after git push)
+### Updating after changes
 
 ```bash
 cd vantager
 git pull
 source .venv/bin/activate
-pip install -r requirements.txt   # only needed if deps changed
+pip install -r requirements.txt   # only if deps changed
 ./start.sh
 ```
 
-### 3. Running with Cloudflare Tunnel
+### Running with Cloudflare Tunnel
 
 ```bash
-export CLOUDFLARE_TUNNEL_TOKEN=your-token
-./start.sh
+# Add to .env:
+CLOUDFLARE_TUNNEL_TOKEN=your-token
 ```
 
 The tunnel exposes the app on your Cloudflare domain without opening ports.
@@ -90,7 +150,7 @@ The tunnel exposes the app on your Cloudflare domain without opening ports.
 
 ## Configuration
 
-All settings are controlled via environment variables with sensible defaults.
+All settings are via environment variables (or `.env` file). Copy `.env.example` to `.env` to get started.
 
 ### Core
 
@@ -101,6 +161,8 @@ All settings are controlled via environment variables with sensible defaults.
 | `DATA_DIR` | `./data` | Root directory for all persistent data |
 | `ADMIN_USER` | `admin` | Initial admin username |
 | `ADMIN_PASSWORD` | `Admin123!` | Initial admin password (**change this!**) |
+| `SECURE_COOKIES` | `false` | Set `true` when behind HTTPS proxy |
+| `CORS_ORIGINS` | *(empty = allow all)* | Comma-separated allowed origins |
 
 ### Limits
 
@@ -111,7 +173,7 @@ All settings are controlled via environment variables with sensible defaults.
 | `MAX_BATCH_ROWS` | `100000` | Max rows in batch prediction |
 | `MAX_PREDICTION_LENGTH` | `500` | Max time series forecast steps |
 | `MAX_MODELS_PER_USER` | `50` | Per-user model quota |
-| `MAX_EXPORT_SIZE_MB` | `2048` | Max model export zip size |
+| `MAX_EXPORT_SIZE_MB` | `2048` | Max model export ZIP size |
 
 ### Sessions
 
@@ -132,7 +194,6 @@ The platform bundles a llama.cpp server that auto-downloads and manages itself.
 | `LLAMA_GPU_LAYERS` | `99` | Layers to offload to GPU |
 | `LLAMA_CTX_SIZE` | `8192` | Context window size |
 | `LLAMA_PORT` | `8081` | Internal llama-server port |
-| `LLAMA_CPP_URL` | `http://localhost:8081/v1/chat/completions` | LLM API endpoint |
 
 ### Speech-to-Text (Whisper)
 
@@ -155,20 +216,21 @@ data/
 ├── temp/            # Temporary upload & processing files
 ├── stt/             # Whisper model cache
 ├── llm/             # llama.cpp binary + GGUF model cache
+├── cache/           # HuggingFace & sentence-transformers cache
 ├── users.json       # User accounts & roles
 ├── sessions.json    # Active sessions
 └── activity.json    # Training & prediction activity log
 ```
 
-> **Tip:** On cloud instances, point `DATA_DIR` to a persistent volume (e.g., `/workspace/data` on RunPod/Vast.ai) so trained models and user data survive instance restarts.
+> **Tip:** On cloud instances, point `DATA_DIR` to a persistent volume (e.g., `/workspace/data` on RunPod) so trained models and user data survive instance restarts.
 
 ---
 
 ## User Management
 
-The platform has a role-based multi-user system:
+Role-based multi-user system with admin approval:
 
-| Role | Can train | Can predict | Can manage users | Can approve models |
+| Role | Train | Predict | Manage Users | Endorse Models |
 |---|---|---|---|---|
 | `master_admin` | Yes | Yes | Yes | Yes |
 | `admin` | Yes | Yes | Yes | Yes |
@@ -176,9 +238,9 @@ The platform has a role-based multi-user system:
 | `pending` | No | No | No | No |
 
 - First launch auto-creates the `master_admin` account
-- New users register and wait for admin approval
-- Each user can run **1 training job** + **1 audio job** concurrently (fair queue)
-- Tabular predictions are unlimited (lightweight, no queuing)
+- New users self-register and wait for admin approval
+- Each user can run **1 training job** + **1 audio job** concurrently
+- Additional jobs are automatically queued (fair scheduling)
 
 ---
 
@@ -187,7 +249,7 @@ The platform has a role-based multi-user system:
 ```
 ┌─────────────────────────────────────────────┐
 │              Browser (index.html)            │
-│         Tailwind CSS + Chart.js SPA         │
+│          Tailwind CSS + Chart.js SPA         │
 └──────────────────┬──────────────────────────┘
                    │ HTTP :8080
 ┌──────────────────▼──────────────────────────┐
@@ -209,13 +271,33 @@ The platform has a role-based multi-user system:
 └──────────────────┬──────────────────────────┘
                    │
         ┌──────────▼──────────┐
-        │     DATA_DIR         │
+        │      DATA_DIR        │
         │  models / users /    │
         │  stt / llm / temp    │
         └─────────────────────┘
 ```
 
 Everything runs in a **single process** with threading. No Redis, no Celery, no database server — just Python and the filesystem.
+
+---
+
+## Project Structure
+
+```
+vantager/
+├── server.py            # Backend — all API routes, ML pipelines, auth, job queue
+├── static/
+│   └── index.html       # Frontend — single-page app (Tailwind + vanilla JS)
+├── example/             # Example datasets & audio files (served via UI)
+│   ├── iris_flower.csv
+│   ├── house_pricing.csv
+│   ├── air_passengers.csv
+│   └── *.mp3            # Call center audio samples
+├── .env.example         # Environment variable template
+├── requirements.txt     # Python dependencies
+├── start.sh             # Linux/Mac startup script
+└── start.bat            # Windows startup script
+```
 
 ---
 
@@ -228,4 +310,4 @@ Everything runs in a **single process** with threading. No Redis, no Celery, no 
 | RTX 4080 | 16 GB | Training + Whisper (LLM on CPU) |
 | T4 | 16 GB | Budget option, inference-focused |
 
-> The platform auto-detects GPU availability and adjusts. Everything works on CPU too — just slower.
+The platform auto-detects GPU availability and adjusts. Everything works on CPU too — just slower.
