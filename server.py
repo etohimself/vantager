@@ -5411,7 +5411,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             users = load_users()
             found = False
             for u in users:
-                if u["username"] == target_username:
+                if u["username"].lower() == target_username:
                     if u["role"] == "master_admin":
                         return self.send_json({"error": "Ana yöneticinin rolü değiştirilemez"}, 403)
                     u["role"] = new_role

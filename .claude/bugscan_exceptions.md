@@ -127,3 +127,5 @@ Each entry should be a concise one-liner describing what to skip and why.
 - Audio eval/predict pipeline temp file leak on model_ref_counter.acquire failure (added cleanup before early return)
 - sklearn tree SQL val.argmax() returns 0 for regression instead of leaf value (added shape check, use val.flat[0] for regression)
 - Airflow DAG clean_dataframe identifies error rows but doesn't filter them from predictions (added df = df[~error_mask])
+- handle_update_role loop uses exact match against lowered target_username (added .lower() to u["username"])
+- handle_change_password loop exact match (both sides have original casing from same file, always match)
