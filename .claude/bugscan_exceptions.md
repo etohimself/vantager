@@ -64,6 +64,8 @@ Each entry should be a concise one-liner describing what to skip and why.
 - ACF max_lag negative with few data points (len(y)>=10 ensures max_lag>=4)
 - Overfit warning never shown for regression (by design, different scales)
 - Cost estimation hardcoded sample_size=100 (cost estimation is inherently approximate)
+- POST body read before route matching enables medium RAM use (bounded by connection limit ~50*10MB)
+- sklearn tree SQL divisor uses len(tree_sqls) not len(estimators) (correct: avg of included subset)
 
 ## Already Fixed
 - Zip extraction path traversal (added member path validation)
