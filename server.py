@@ -209,9 +209,12 @@ def clean_dataframe(df, context="training", timestamp_column=None, item_id_colum
             df = df.sort_values(by=sort_cols).reset_index(drop=True)
         # Group by item_id to prevent cross-series contamination
         if item_id_column and item_id_column in df.columns:
-            df[fill_cols] = df.groupby(item_id_column)[fill_cols].transform(lambda x: x.ffill().bfill())
+            df[fill_cols] = df.groupby(item_id_column)[fill_cols].transform(
+                lambda x: x.ffill().bfill())
         else:
             df[fill_cols] = df[fill_cols].ffill().bfill()
+        # Convert any remaining object columns that became mixed-type after fill
+        df[fill_cols] = df[fill_cols].infer_objects()
         nan_after = df[fill_cols].isna().sum().sum() if fill_cols else 0
         filled_count = nan_before - nan_after
         if filled_count > 0:
@@ -4155,13 +4158,15 @@ def _get_whisper_model():
                     if os.path.isfile(os.path.join(WHISPER_MODEL_DIR, "model.bin")):
                         log.info(f"  [Whisper] Loading local model from {WHISPER_MODEL_DIR}")
                         _whisper_model = WhisperModel(WHISPER_MODEL_DIR, device=WHISPER_DEVICE,
-                                                       compute_type=WHISPER_COMPUTE_TYPE)
+                                                       compute_type=WHISPER_COMPUTE_TYPE,
+                                                       cpu_threads=resource_manager.cpu_count)
                     else:
                         log.info(f"  [Whisper] model.bin not found in {WHISPER_MODEL_DIR}, downloading {WHISPER_MODEL_REPO}...")
                         os.makedirs(WHISPER_MODEL_DIR, exist_ok=True)
                         _whisper_model = WhisperModel(WHISPER_MODEL_REPO, device=WHISPER_DEVICE,
                                                        compute_type=WHISPER_COMPUTE_TYPE,
-                                                       download_root=WHISPER_MODEL_DIR)
+                                                       download_root=WHISPER_MODEL_DIR,
+                                                       cpu_threads=resource_manager.cpu_count)
                     _w_after = resource_manager.get_actual_free_vram_mb()
                     _whisper_measured_vram_mb = max(0, _w_before - _w_after)
                     log.info(f"  [Whisper] Model loaded. Measured VRAM: {_whisper_measured_vram_mb}MB")
