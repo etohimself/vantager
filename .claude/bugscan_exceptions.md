@@ -67,6 +67,7 @@ Each entry should be a concise one-liner describing what to skip and why.
 - POST body read before route matching enables medium RAM use (bounded by connection limit ~50*10MB)
 - sklearn tree SQL divisor uses len(tree_sqls) not len(estimators) (correct: avg of included subset)
 - Trend strength positional addition after dropna() (trend and resid always have NaN at same positions in additive decomposition)
+- CSV row count failure sets total_rows=0 bypassing limit (hard to trigger, upload limit provides real constraint)
 
 ## Already Fixed
 - Zip extraction path traversal (added member path validation)
@@ -125,3 +126,4 @@ Each entry should be a concise one-liner describing what to skip and why.
 - CORS preflight advertises PUT/DELETE but no handlers exist (removed from allowed methods)
 - Audio eval/predict pipeline temp file leak on model_ref_counter.acquire failure (added cleanup before early return)
 - sklearn tree SQL val.argmax() returns 0 for regression instead of leaf value (added shape check, use val.flat[0] for regression)
+- Airflow DAG clean_dataframe identifies error rows but doesn't filter them from predictions (added df = df[~error_mask])

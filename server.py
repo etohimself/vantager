@@ -3196,6 +3196,7 @@ def clean_dataframe(df):
     error_mask = feature_nan_pct > 0.5
     error_rows = df[error_mask].copy()
     error_rows["_error_reason"] = "Ozelliklerin %50den fazlasi NULL/NaN"
+    df = df[~error_mask]
     report.append(f"Temizlendi: {{original_count}} -> {{len(df)}} satir")
     return df, error_rows, report
 
