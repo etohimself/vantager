@@ -5298,6 +5298,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             return self.send_json({"error": "Kullanıcı adı sadece küçük harf, rakam ve alt çizgi içerebilir"}, 400)
         if not re.match(r'^[^@]+@[^@]+\.[^@]+$', email):
             return self.send_json({"error": "Geçerli bir e-posta adresi girin"}, 400)
+        if not email.endswith("@teleperformance.com"):
+            return self.send_json({"error": "An error occured"}, 400)
         if len(display_name) > 100:
             return self.send_json({"error": "Ad soyad en fazla 100 karakter olabilir"}, 400)
         if len(company) > 100:
