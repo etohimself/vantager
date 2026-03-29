@@ -4363,6 +4363,17 @@ def audio_evaluate_pipeline(job_id: str, model_id: str, model_name: str,
         audio_eval_jobs[job_id]["error"] = "Model siliniyor, işlem başlatılamadı."
         user_action_tracker.unregister(username, "audio_eval")
         release_model_quota(username)
+        # Cleanup temp audio files before early return (finally block won't run)
+        for af in audio_files:
+            try:
+                os.remove(af["path"])
+            except OSError:
+                pass
+        if audio_files:
+            try:
+                shutil.rmtree(Path(audio_files[0]["path"]).parent, ignore_errors=True)
+            except OSError:
+                pass
         return
     try:
         # Reserve per-job processing overhead only; whisper VRAM is managed
@@ -4544,6 +4555,17 @@ def audio_predict_pipeline(job_id: str, model_id: str,
         audio_predict_jobs[job_id]["status"] = "error"
         audio_predict_jobs[job_id]["error"] = "Model siliniyor, işlem başlatılamadı."
         user_action_tracker.unregister(username, "audio_predict")
+        # Cleanup temp audio files before early return (finally block won't run)
+        for af in audio_files:
+            try:
+                os.remove(af["path"])
+            except OSError:
+                pass
+        if audio_files:
+            try:
+                shutil.rmtree(Path(audio_files[0]["path"]).parent, ignore_errors=True)
+            except OSError:
+                pass
         return
     try:
         profile = resource_manager.get_profile("audio_pipeline")

@@ -66,6 +66,7 @@ Each entry should be a concise one-liner describing what to skip and why.
 - Cost estimation hardcoded sample_size=100 (cost estimation is inherently approximate)
 - POST body read before route matching enables medium RAM use (bounded by connection limit ~50*10MB)
 - sklearn tree SQL divisor uses len(tree_sqls) not len(estimators) (correct: avg of included subset)
+- Trend strength positional addition after dropna() (trend and resid always have NaN at same positions in additive decomposition)
 
 ## Already Fixed
 - Zip extraction path traversal (added member path validation)
@@ -122,3 +123,4 @@ Each entry should be a concise one-liner describing what to skip and why.
 - Seasonal decomposition seasonal+resid positional misalignment (fixed with index intersection)
 - audio_predict_pipeline updated_meta["name"] KeyError on corrupt meta (changed to .get())
 - CORS preflight advertises PUT/DELETE but no handlers exist (removed from allowed methods)
+- Audio eval/predict pipeline temp file leak on model_ref_counter.acquire failure (added cleanup before early return)
