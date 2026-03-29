@@ -165,6 +165,16 @@ def clean_dataframe(df, context="training", timestamp_column=None):
             except Exception as e:
                 report["issues_found"].append(f"'{timestamp_column}' datetime dönüşümü başarısız: {e}")
 
+        # Drop rows where ALL non-timestamp columns are empty (e.g. future placeholder rows)
+        non_ts_cols = [c for c in df.columns if c != timestamp_column]
+        if non_ts_cols:
+            all_empty_mask = df[non_ts_cols].isna().all(axis=1)
+            empty_count = all_empty_mask.sum()
+            if empty_count > 0:
+                df = df[~all_empty_mask].reset_index(drop=True)
+                report["issues_found"].append(f"{empty_count} tamamen boş satır (yalnızca tarih içeren)")
+                report["actions_taken"].append(f"{empty_count} boş satır silindi")
+
         # Replace infinities in numeric columns
         numeric_cols = df.select_dtypes(include=[np.number]).columns
         for col in numeric_cols:
@@ -3406,6 +3416,8 @@ def load_and_forecast(**kwargs):
     if id_col not in input_df.columns or id_col == "__item_id":
         id_col = "__item_id"
         input_df[id_col] = "series_0"
+    else:
+        input_df[id_col] = input_df[id_col].astype(str)
 
     # Sirala
     input_df = input_df.sort_values(by=[id_col, TIMESTAMP_COLUMN]).reset_index(drop=True)
@@ -3556,6 +3568,7 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
             # Handle item_id: if user has single series, create a dummy ID
             if item_id_column and item_id_column in df.columns:
                 id_col = item_id_column
+                df[id_col] = df[id_col].astype(str)
             else:
                 id_col = "__item_id"
                 df[id_col] = "series_0"
@@ -6141,6 +6154,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
 
                 if id_col not in hist_df.columns:
                     hist_df[id_col] = "series_0"
+                else:
+                    hist_df[id_col] = hist_df[id_col].astype(str)
 
                 hist_df = hist_df.sort_values(by=[id_col, ts_col]).reset_index(drop=True)
 
@@ -6399,6 +6414,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                     return self.send_json({"error": f"Zaman damgası sütunu ayrıştırılamadı: {self._safe_error_message(e)}"}, 400)
                 if id_col not in input_df.columns:
                     input_df[id_col] = "series_0"
+                else:
+                    input_df[id_col] = input_df[id_col].astype(str)
 
                 input_df = input_df.sort_values(by=[id_col, ts_col]).reset_index(drop=True)
 
