@@ -821,6 +821,8 @@ class ResourceManager:
                 self.total_ram_mb = 8192  # conservative default
 
         self.cpu_count = os.cpu_count() or 4
+        # Reserve cores for HTTP server + system — training gets the rest
+        self.training_cpu_count = max(1, self.cpu_count - 4)
 
         # ── Compute safe budgets ──
         self.safe_vram_mb = int(self.total_vram_mb * (1.0 - self._vram_safety))
@@ -3642,6 +3644,7 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
                                              "high_quality", "best_quality") else "medium_quality",
                 time_limit=600,
                 verbosity=1,
+                num_cpus=resource_manager.training_cpu_count,
             )
 
             leaderboard = ts_predictor.leaderboard(silent=True)
@@ -3832,6 +3835,7 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
         )
 
         predictor.fit(train_data=train_data, presets=preset, time_limit=600, verbosity=1,
+                      num_cpus=resource_manager.training_cpu_count,
                       num_gpus=0)  # GPU reserved for Whisper/LLM; tree models are CPU anyway
 
         training_jobs.update_fields(job_id, _phase="leaderboard")
