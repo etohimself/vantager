@@ -40,24 +40,38 @@ logging.basicConfig(
 log = logging.getLogger("TahminPlatformu")
 
 # ── In-memory ring buffer for /api/admin/logs endpoint ────────────
+# Captures ALL output: log.info(), print(), third-party library output, warnings, etc.
 import collections as _collections
 _LOG_RING_BUFFER = _collections.deque(maxlen=2000)
 _LOG_RING_LOCK = threading.Lock()
 
-class _RingBufferHandler(logging.Handler):
-    """Captures formatted log lines into a fixed-size deque."""
-    def emit(self, record):
-        try:
-            line = self.format(record)
-            with _LOG_RING_LOCK:
-                _LOG_RING_BUFFER.append(line)
-        except Exception:
-            pass
+class _TeeWriter:
+    """Wraps a stream so every write() also appends complete lines to the ring buffer."""
+    def __init__(self, original):
+        self._original = original
+        self._partial = ""
+    def write(self, text):
+        self._original.write(text)
+        if not text:
+            return
+        self._partial += text
+        while "\n" in self._partial:
+            line, self._partial = self._partial.split("\n", 1)
+            line = line.rstrip("\r")
+            if line:
+                with _LOG_RING_LOCK:
+                    _LOG_RING_BUFFER.append(line)
+    def flush(self):
+        self._original.flush()
+    def fileno(self):
+        return self._original.fileno()
+    def isatty(self):
+        return self._original.isatty()
+    def __getattr__(self, name):
+        return getattr(self._original, name)
 
-_ring_handler = _RingBufferHandler()
-_ring_handler.setFormatter(logging.Formatter(
-    "%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
-logging.getLogger().addHandler(_ring_handler)  # attach to root logger
+sys.stdout = _TeeWriter(sys.stdout)
+sys.stderr = _TeeWriter(sys.stderr)
 
 
 # ══════════════════════════════════════════════════════════════════
