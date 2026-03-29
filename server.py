@@ -2537,7 +2537,9 @@ class ModelCache:
             if not self._cache:
                 return
             # Sort by last_used ascending, evict oldest half (at least 1)
-            items = sorted(self._cache.items(), key=lambda kv: kv[1]["last_used"])
+            # Skip models that are actively being used in predictions
+            items = [(k, v) for k, v in sorted(self._cache.items(), key=lambda kv: kv[1]["last_used"])
+                     if not model_ref_counter.is_busy(k)]
             evict_count = max(1, len(items) // 2)
             for key, _ in items[:evict_count]:
                 entry = self._cache.pop(key, None)
@@ -2574,6 +2576,9 @@ class ModelCache:
             with self._lock:
                 for mid, entry in list(self._cache.items()):
                     if now - entry["last_used"] > self._ttl:
+                        # Don't evict models that are actively being used in predictions
+                        if model_ref_counter.is_busy(mid):
+                            continue
                         to_evict.append(mid)
                 for mid in to_evict:
                     entry = self._cache.pop(mid, None)
@@ -3891,7 +3896,6 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
                                              "high_quality", "best_quality") else "medium_quality",
                 time_limit=600,
                 verbosity=1,
-                num_cpus=resource_manager.training_cpu_count,
             )
 
             leaderboard = ts_predictor.leaderboard(silent=True)

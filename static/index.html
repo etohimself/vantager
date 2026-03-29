@@ -1160,7 +1160,7 @@
                 credentials: 'same-origin',
             });
             const data = await res.json();
-            if (data.error) { showToast('Bir sorun olu\u015ftu: ' + data.error); return; }
+            if (data.error) { showToast('Bir sorun olu\u015ftu: ' + data.error); uploadData = null; return; }
             uploadData = data;
             document.getElementById('train-step1').classList.add('hidden');
             document.getElementById('train-step2').classList.remove('hidden');
@@ -1201,9 +1201,15 @@
         const trainBtn = document.querySelector('[onclick*="startTraining"]');
         if (trainBtn) trainBtn.disabled = true;
         const taskType = document.getElementById('task-type').value;
+        const targetCol = document.getElementById('target-col').value;
+        if (!targetCol) {
+            showToast('Lütfen bir hedef sütun seçin.', 'warn');
+            if (trainBtn) trainBtn.disabled = false;
+            return;
+        }
         const payload = {
             temp_id: uploadData.temp_id,
-            target_column: document.getElementById('target-col').value,
+            target_column: targetCol,
             task_type: taskType,
             preset: document.getElementById('preset').value,
             model_name: document.getElementById('model-name').value || '\u0130simsiz Analiz',
@@ -3383,117 +3389,4 @@
 
         const csvCards = csvOrder.map(file => {
             const info = csvInfo[file];
-            const available = availableCsvs.has(file);
-            return `
-            <div class="card p-6">
-                <div class="mb-3">
-                    <h3 class="font-semibold text-slate-800">${esc(info.name)}</h3>
-                    <span class="tag tag-blue text-xs mt-1 inline-block">${esc(info.type)}</span>
-                </div>
-                <p class="text-sm text-slate-500 mb-4">${esc(info.desc)}</p>
-                ${available
-                    ? `<button class="btn-primary btn-sm w-full flex items-center justify-center gap-1.5" onclick="downloadExampleFile('csv','${escAttr(file)}')">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                        \u0130ndir (.csv)</button>`
-                    : `<div class="text-xs text-slate-400 text-center py-2 border border-dashed border-slate-200 rounded-lg">Dosya hen\u00fcz y\u00fcklenmedi</div>`}
-            </div>`;
-        }).join('');
-
-        // Extra CSVs not in the predefined list
-        const extraCsvs = (data.csv_files || []).filter(f => !csvInfo[f]);
-        const extraCards = extraCsvs.map(file => `
-            <div class="card p-6">
-                <div class="mb-3">
-                    <h3 class="font-semibold text-slate-800">${esc(file)}</h3>
-                    <span class="tag tag-blue text-xs mt-1 inline-block">Veri Seti</span>
-                </div>
-                <p class="text-sm text-slate-500 mb-4">\u00d6rnek veri seti dosyas\u0131.</p>
-                <button class="btn-primary btn-sm w-full flex items-center justify-center gap-1.5" onclick="downloadExampleFile('csv','${escAttr(file)}')">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                    \u0130ndir (.csv)</button>
-            </div>`).join('');
-
-        app().innerHTML = `
-        <div class="fade-in">
-            <div class="flex items-end justify-between mb-8">
-                <div>
-                    <h1 class="text-3xl font-bold tracking-tight text-slate-900 mb-1">\u00d6rnek Veriler</h1>
-                    <p class="text-slate-500 text-sm">Platformu denemek i\u00e7in haz\u0131r veri setleri ve ses dosyalar\u0131</p>
-                </div>
-            </div>
-
-            <div class="section-title">Tablo Veri Setleri</div>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-                ${csvCards}${extraCards}
-            </div>
-
-            <div class="flex items-center justify-between mb-4">
-                <div class="section-title mb-0">\u00c7a\u011fr\u0131 Ses Analizi \u00d6rnek Dosyalar\u0131</div>
-                ${audioFiles.length > 0 ? `<button class="btn-primary btn-sm flex items-center gap-1.5" onclick="downloadExampleAudioZip()">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                    T\u00fcm\u00fcn\u00fc \u0130ndir (.zip)
-                </button>` : ''}
-            </div>
-            ${audioFiles.length > 0 ? `
-            <div class="card-flat overflow-hidden">
-                <table class="data-table">
-                    <thead><tr><th>Dosya Ad\u0131</th><th style="width:220px">Dinle</th><th style="width:90px">\u0130ndir</th></tr></thead>
-                    <tbody>
-                    ${audioFiles.map(f => `
-                        <tr>
-                            <td class="font-medium text-sm text-slate-700">${esc(f)}</td>
-                            <td><audio controls preload="none" src="/api/examples/audio/${encodeURIComponent(f)}" style="height:32px;max-width:200px"></audio></td>
-                            <td><button class="btn-secondary btn-sm" onclick="downloadExampleFile('audio','${escAttr(f)}')">\u0130ndir</button></td>
-                        </tr>
-                    `).join('')}
-                    </tbody>
-                </table>
-            </div>
-            ` : '<div class="card p-8 text-center text-slate-400">Hen\u00fcz \u00f6rnek ses dosyas\u0131 y\u00fcklenmemi\u015f.<br><code class="text-xs">example/</code> klas\u00f6r\u00fcne .mp3 dosyalar\u0131 ekleyin.</div>'}
-        </div>`;
-    }
-
-    async function downloadExampleFile(type, filename) {
-        const url = API + `/api/examples/${type}/${encodeURIComponent(filename)}`;
-        try {
-            const res = await fetch(url, { credentials: 'same-origin' });
-            if (res.ok) {
-                const blob = await res.blob();
-                const a = document.createElement('a');
-                a.href = URL.createObjectURL(blob);
-                a.download = filename;
-                a.click();
-                URL.revokeObjectURL(a.href);
-            } else {
-                const d = await res.json();
-                showToast(d.error || 'Bir sorun olu\u015ftu.');
-            }
-        } catch (e) { showToast('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
-    }
-
-    async function downloadExampleAudioZip() {
-        try {
-            const res = await fetch(API + '/api/examples/audio-zip', { credentials: 'same-origin' });
-            if (res.ok) {
-                const blob = await res.blob();
-                const a = document.createElement('a');
-                a.href = URL.createObjectURL(blob);
-                a.download = 'ornek_ses_dosyalari.zip';
-                a.click();
-                URL.revokeObjectURL(a.href);
-            } else {
-                const d = await res.json();
-                showToast(d.error || 'Bir sorun olu\u015ftu.');
-            }
-        } catch (e) { showToast('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
-    }
-
-    // ══════════════════════════════════════════════════════════
-    //  404
-    // ══════════════════════════════════════════════════════════
-    function renderNotFound() {
-        app().innerHTML = `<div class="fade-in text-center py-20"><h1 class="text-2xl font-bold text-slate-800 mb-2">Sayfa Bulunamad\u0131</h1><p class="text-slate-500 mb-6">Arad\u0131\u011f\u0131n\u0131z sayfa mevcut de\u011fil.</p><button class="btn-primary" onclick="navigate('/')">Ana Sayfaya D\u00f6n</button></div>`;
-    }
-    </script>
-</body>
-</html>
+            const available = availableCsvs.has(file
