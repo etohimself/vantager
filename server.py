@@ -5991,7 +5991,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             "endorsed": endorsed,
             "my_models": my_models[:5],
             "best_model": best_model,
-            "activity": activity[:10],
+            "activity": [a for a in activity if a.get("action") in
+                        ("trained", "audio_evaluated")][:10],
             "user": {
                 "username": user["username"],
                 "display_name": user.get("display_name", user["username"]),
