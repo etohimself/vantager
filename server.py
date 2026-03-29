@@ -676,6 +676,9 @@ ACTIVITY_FILE = DATA_DIR / "activity.json"
 USERS_FILE = DATA_DIR / "users.json"
 SESSIONS_FILE = DATA_DIR / "sessions.json"
 
+# Critical files that must NEVER be silently replaced with empty defaults
+_CRITICAL_JSON_FILES = {USERS_FILE, SESSIONS_FILE}
+
 # Ensure directories exist
 try:
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
@@ -760,16 +763,21 @@ def _atomic_write_json(filepath: Path, data, use_safe_json=False):
         raise
 
 
+_CRITICAL_JSON_FILES = None  # initialized after DATA_DIR is set
+
+
 def _safe_read_json(filepath: Path, default=None):
     """Read JSON with error recovery. Returns default if file missing or corrupt.
-    On corruption, creates a timestamped .corrupt.bak backup before returning default."""
+    On corruption of CRITICAL files (users, sessions), raises instead of returning
+    empty default to prevent overwriting the database with empty data.
+    On corruption of non-critical files, creates backup and returns default."""
     if not filepath.exists():
         return default if default is not None else []
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError) as e:
-        # Create a backup of the corrupt file before returning default
+        # Create a backup of the corrupt file
         try:
             backup_name = f"{filepath.stem}.corrupt.{datetime.now().strftime('%Y%m%d_%H%M%S')}{filepath.suffix}"
             backup_path = filepath.parent / backup_name
@@ -777,6 +785,12 @@ def _safe_read_json(filepath: Path, default=None):
             log.error(f"JSON CORRUPT: {filepath} — backup saved to {backup_path}. Error: {e}")
         except OSError as backup_err:
             log.error(f"JSON CORRUPT: {filepath} — backup failed ({backup_err}). Error: {e}")
+        # For critical state files, refuse to return empty — prevents data wipeout
+        if _CRITICAL_JSON_FILES and filepath in _CRITICAL_JSON_FILES:
+            raise RuntimeError(
+                f"Critical file corrupt: {filepath}. Refusing to return empty default "
+                f"to prevent data loss. Backup saved. Manual recovery required."
+            ) from e
         return default if default is not None else []
 
 
@@ -4301,6 +4315,17 @@ def _ensure_llama_running():
     # Only the thread that set _llama_restarting=True performs the restart
     if i_am_restarter:
         try:
+            # Check VRAM availability before restart to avoid GPU OOM race with Whisper
+            llm_vram = resource_manager.PROFILES.get("llm_external", {}).get("vram_mb", 0)
+            if llm_vram > 0:
+                actual_free = resource_manager.get_actual_free_vram_mb()
+                if actual_free < llm_vram:
+                    log.warning(f"[LLM] Deferring restart — insufficient VRAM ({actual_free}MB free, need {llm_vram}MB)")
+                    _llama_last_fail = time.time()
+                    with _llama_lock:
+                        _llama_restarting = False
+                    _llama_restart_event.set()
+                    return
             _start_bundled_llama()
             if _llama_process is None:
                 _llama_last_fail = time.time()
@@ -8548,7 +8573,7 @@ def main():
 
     # ── Graceful shutdown handler ──
     _shutdown_event = threading.Event()
-    _SHUTDOWN_TIMEOUT = 30  # seconds to wait for active jobs
+    _SHUTDOWN_TIMEOUT = 8  # seconds — must finish before container runtime sends SIGKILL (typically 10s)
 
     def _graceful_shutdown(signum, frame):
         if _shutdown_event.is_set():
