@@ -60,6 +60,7 @@ Each entry should be a concise one-liner describing what to skip and why.
 - Audio predict jobs submitted to _audio_eval_queue with wrong job store (microsecond gap, pipeline sets status itself)
 - Non-atomic job status+error dict updates (microsecond window, next poll correct)
 - handle_predict_batch doesn't validate rows is a list (caught by outer exception handler)
+- Early auth check for large uploads doesn't enforce API rate limit (upload semaphore limits to 5)
 
 ## Already Fixed
 - Zip extraction path traversal (added member path validation)
@@ -109,3 +110,7 @@ Each entry should be a concise one-liner describing what to skip and why.
 - Audio eval/predict pipelines missing _stale_released guard (added same pattern as training)
 - handle_explain tabular path missing _prediction_semaphore (added semaphore acquire/release)
 - sklearn tree ensemble SQL missing truncation warning for >20 estimators (added warning)
+- Frontend CSV line splitter doesn't handle RFC 4180 escaped quotes (added "" handling)
+- Timeseries explainability NaT index crash on isoformat() (added pd.notna guard)
+- Overfit warning never shown for timeseries models (enabled with score-score_internal formula)
+- Blank CSV lines create ghost rows in timeseries predictions (added empty line filter)

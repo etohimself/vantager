@@ -1308,7 +1308,7 @@
         e.preventDefault();
         e.currentTarget.classList.remove('dragover');
         const files = Array.from(e.dataTransfer.files).filter(f =>
-            /\.(wav|mp3|m4a|ogg|flac)$/i.test(f.name)
+            /\.(wav|mp3|m4a|ogg|flac|webm)$/i.test(f.name)
         );
         addAudioFiles(files);
     }
@@ -1774,13 +1774,15 @@
         e.preventDefault();
         e.currentTarget.classList.remove('dragover');
         const files = Array.from(e.dataTransfer.files).filter(f =>
-            /\.(wav|mp3|m4a|ogg|flac)$/i.test(f.name)
+            /\.(wav|mp3|m4a|ogg|flac|webm)$/i.test(f.name)
         );
         addPredictAudioFiles(files);
     }
 
     function handlePredictAudioFileSelect(input) {
-        const files = Array.from(input.files);
+        const files = Array.from(input.files).filter(f =>
+            /\.(wav|mp3|m4a|ogg|flac|webm)$/i.test(f.name)
+        );
         addPredictAudioFiles(files);
         input.value = '';
     }
@@ -2072,7 +2074,7 @@
                     ${submodels.map((sm, i) => {
                         const isTS = model.task_type === 'timeseries';
                         const isReg = model.task_type === 'regression';
-                        const overfit = (isTS || isReg) ? 0 : ((sm.score_internal || 0) - sm.score);
+                        const overfit = isReg ? 0 : isTS ? (sm.score - (sm.score_internal || 0)) : ((sm.score_internal || 0) - sm.score);
                         const ofFlag = overfit > 0.05 ? '<span class="tag tag-red text-xs ml-1" title="\u0130\u00e7 skor test skorundan \u00e7ok y\u00fcksek \u2014 a\u015f\u0131r\u0131 \u00f6\u011frenme olabilir">\u26a0</span>' : '';
                         const autoTag = sm.airflow_support.supported ? '<span class="tag tag-green">Destekleniyor</span>' : '<span class="tag tag-gray">Desteklenmiyor</span>';
                         return `
@@ -2407,7 +2409,11 @@
             let cur = '', inQ = false;
             for (let ci = 0; ci < text.length; ci++) {
                 const c = text[ci];
-                if (inQ) { cur += c; if (c === '"') inQ = false; }
+                if (inQ) {
+                    if (c === '"' && text[ci+1] === '"') { cur += '"'; ci++; }
+                    else if (c === '"') { inQ = false; cur += c; }
+                    else { cur += c; }
+                }
                 else if (c === '"') { cur += c; inQ = true; }
                 else if (c === '\n') { lines.push(cur.replace(/\r$/, '')); cur = ''; }
                 else { cur += c; }
@@ -2420,6 +2426,7 @@
             const headers = parseCSVLine(lines[0]);
             const history = [];
             for (let i = 1; i < lines.length; i++) {
+                if (lines[i].trim() === '') continue;
                 const vals = parseCSVLine(lines[i]);
                 const row = {};
                 headers.forEach((h, idx) => {

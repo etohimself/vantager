@@ -6830,8 +6830,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
                     "min": round(float(y.min()), 4),
                     "max": round(float(y.max()), 4),
                     "cv": round(float(y.std() / y.mean()), 4) if abs(float(y.mean())) > 1e-10 else None,
-                    "start": y.index.min().isoformat(),
-                    "end": y.index.max().isoformat(),
+                    "start": y.index.min().isoformat() if pd.notna(y.index.min()) else "N/A",
+                    "end": y.index.max().isoformat() if pd.notna(y.index.max()) else "N/A",
                 }
                 result["basic_stats"] = basic_stats
 
