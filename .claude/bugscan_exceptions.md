@@ -69,6 +69,8 @@ Each entry should be a concise one-liner describing what to skip and why.
 - Trend strength positional addition after dropna() (trend and resid always have NaN at same positions in additive decomposition)
 - CSV row count failure sets total_rows=0 bypassing limit (hard to trigger, upload limit provides real constraint)
 
+- Stale job cleanup double-release of model quota for audio_eval (mitigated by _stale_released flag, microsecond window)
+
 ## Already Fixed
 - Zip extraction path traversal (added member path validation)
 - _load_only bypasses all resource/concurrency guards (added semaphore + ref counter)
@@ -129,3 +131,4 @@ Each entry should be a concise one-liner describing what to skip and why.
 - Airflow DAG clean_dataframe identifies error rows but doesn't filter them from predictions (added df = df[~error_mask])
 - handle_update_role loop uses exact match against lowered target_username (added .lower() to u["username"])
 - handle_change_password loop exact match (both sides have original casing from same file, always match)
+- Audio predict status missing queue position (added position field and frontend check)

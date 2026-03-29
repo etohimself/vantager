@@ -211,6 +211,7 @@
         if (path === '/library') return renderLibrary();
         if (path === '/train') return renderTrain();
         if (path === '/admin') return renderAdmin();
+        if (path === '/examples') return renderExamples();
         if (path === '/settings') return renderSettings();
 
         let m;
@@ -234,6 +235,7 @@
                     Yeni Analiz
                 </span>
             </div>
+            <div class="nav-link" onclick="navigate('/examples')" data-nav="examples">\u00d6rnek Veriler</div>
             ${isAdmin() ? '<div class="nav-link" onclick="navigate(\'/admin\')" data-nav="admin">Y\u00f6netim</div>' : ''}
         `;
         const userDiv = document.getElementById('nav-user');
@@ -257,6 +259,7 @@
             if (nav === 'dashboard' && path === '/') el.classList.add('active');
             if (nav === 'library' && path === '/library') el.classList.add('active');
             if (nav === 'train' && path.startsWith('/train')) el.classList.add('active');
+            if (nav === 'examples' && path === '/examples') el.classList.add('active');
             if (nav === 'admin' && path === '/admin') el.classList.add('active');
         });
     }
@@ -1894,6 +1897,12 @@
                     document.getElementById('start-audio-predict-btn').classList.remove('hidden');
                     return;
                 }
+                if (res.position != null && res.position >= 0) {
+                    if (statusEl) statusEl.textContent = `S\u0131ran\u0131z: ${res.position + 1}. s\u0131rada bekliyorsunuz...`;
+                    if (barEl) barEl.style.width = '5%';
+                    _pollTimers.push(setTimeout(poll, 3000));
+                    return;
+                }
                 const total = Math.max(1, res.total || 0);
                 const processed = res.processed || 0;
                 const pct = Math.min(100, Math.max(5, Math.round((processed / total) * 100)));
@@ -3246,6 +3255,130 @@
         msgDiv.classList.remove('hidden');
         if (res.success) { msgDiv.className = 'text-sm text-center text-brand-600'; msgDiv.textContent = res.message; }
         else { msgDiv.className = 'text-sm text-center text-danger-500'; msgDiv.textContent = res.error; }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  Örnek Veriler
+    // ══════════════════════════════════════════════════════════
+    async function renderExamples() {
+        app().innerHTML = `<div class="flex items-center justify-center py-20"><div class="spinner"></div></div>`;
+        const data = await api('/api/examples');
+        if (data.error) { app().innerHTML = `<div class="card p-8 text-center text-slate-500">${esc(data.error)}</div>`; return; }
+
+        const csvInfo = {
+            'iris_flower.csv':       { name: 'Iris \u00c7i\u00e7e\u011fi Veri Seti',      type: 'Kategorileme (Classification)',     desc: '3 farkl\u0131 iris \u00e7i\u00e7e\u011fi t\u00fcr\u00fcn\u00fc s\u0131n\u0131fland\u0131rmak i\u00e7in kullan\u0131lan klasik veri seti.' },
+            'house_pricing.csv':     { name: 'Ev Fiyatlar\u0131 Veri Seti',    type: 'Say\u0131sal Tahmin (Regression)',    desc: 'Ev \u00f6zelliklerine g\u00f6re fiyat tahmini yapmak i\u00e7in kullan\u0131lan regresyon veri seti.' },
+            'air_passengers.csv':    { name: 'Havayolu Yolcu Say\u0131lar\u0131',  type: 'Gelecek Tahmini (Time Series)',  desc: 'Ayl\u0131k havayolu yolcu say\u0131lar\u0131n\u0131 i\u00e7eren zaman serisi veri seti.' },
+        };
+        const csvOrder = ['iris_flower.csv', 'house_pricing.csv', 'air_passengers.csv'];
+        const availableCsvs = new Set(data.csv_files || []);
+        const audioFiles = data.audio_files || [];
+
+        const csvCards = csvOrder.map(file => {
+            const info = csvInfo[file];
+            const available = availableCsvs.has(file);
+            return `
+            <div class="card p-6">
+                <div class="mb-3">
+                    <h3 class="font-semibold text-slate-800">${esc(info.name)}</h3>
+                    <span class="tag tag-blue text-xs mt-1 inline-block">${esc(info.type)}</span>
+                </div>
+                <p class="text-sm text-slate-500 mb-4">${esc(info.desc)}</p>
+                ${available
+                    ? `<button class="btn-primary btn-sm w-full flex items-center justify-center gap-1.5" onclick="downloadExampleFile('csv','${escAttr(file)}')">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        \u0130ndir (.csv)</button>`
+                    : `<div class="text-xs text-slate-400 text-center py-2 border border-dashed border-slate-200 rounded-lg">Dosya hen\u00fcz y\u00fcklenmedi</div>`}
+            </div>`;
+        }).join('');
+
+        // Extra CSVs not in the predefined list
+        const extraCsvs = (data.csv_files || []).filter(f => !csvInfo[f]);
+        const extraCards = extraCsvs.map(file => `
+            <div class="card p-6">
+                <div class="mb-3">
+                    <h3 class="font-semibold text-slate-800">${esc(file)}</h3>
+                    <span class="tag tag-blue text-xs mt-1 inline-block">Veri Seti</span>
+                </div>
+                <p class="text-sm text-slate-500 mb-4">\u00d6rnek veri seti dosyas\u0131.</p>
+                <button class="btn-primary btn-sm w-full flex items-center justify-center gap-1.5" onclick="downloadExampleFile('csv','${escAttr(file)}')">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    \u0130ndir (.csv)</button>
+            </div>`).join('');
+
+        app().innerHTML = `
+        <div class="fade-in">
+            <div class="flex items-end justify-between mb-8">
+                <div>
+                    <h1 class="text-3xl font-bold tracking-tight text-slate-900 mb-1">\u00d6rnek Veriler</h1>
+                    <p class="text-slate-500 text-sm">Platformu denemek i\u00e7in haz\u0131r veri setleri ve ses dosyalar\u0131</p>
+                </div>
+            </div>
+
+            <div class="section-title">Tablo Veri Setleri</div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                ${csvCards}${extraCards}
+            </div>
+
+            <div class="flex items-center justify-between mb-4">
+                <div class="section-title mb-0">\u00c7a\u011fr\u0131 Ses Analizi \u00d6rnek Dosyalar\u0131</div>
+                ${audioFiles.length > 0 ? `<button class="btn-primary btn-sm flex items-center gap-1.5" onclick="downloadExampleAudioZip()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    T\u00fcm\u00fcn\u00fc \u0130ndir (.zip)
+                </button>` : ''}
+            </div>
+            ${audioFiles.length > 0 ? `
+            <div class="card-flat overflow-hidden">
+                <table class="data-table">
+                    <thead><tr><th>Dosya Ad\u0131</th><th style="width:220px">Dinle</th><th style="width:90px">\u0130ndir</th></tr></thead>
+                    <tbody>
+                    ${audioFiles.map(f => `
+                        <tr>
+                            <td class="font-medium text-sm text-slate-700">${esc(f)}</td>
+                            <td><audio controls preload="none" src="/api/examples/audio/${encodeURIComponent(f)}" style="height:32px;max-width:200px"></audio></td>
+                            <td><button class="btn-secondary btn-sm" onclick="downloadExampleFile('audio','${escAttr(f)}')">\u0130ndir</button></td>
+                        </tr>
+                    `).join('')}
+                    </tbody>
+                </table>
+            </div>
+            ` : '<div class="card p-8 text-center text-slate-400">Hen\u00fcz \u00f6rnek ses dosyas\u0131 y\u00fcklenmemi\u015f.<br><code class="text-xs">example/</code> klas\u00f6r\u00fcne .mp3 dosyalar\u0131 ekleyin.</div>'}
+        </div>`;
+    }
+
+    async function downloadExampleFile(type, filename) {
+        const url = API + `/api/examples/${type}/${encodeURIComponent(filename)}`;
+        try {
+            const res = await fetch(url, { credentials: 'same-origin' });
+            if (res.ok) {
+                const blob = await res.blob();
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = filename;
+                a.click();
+                URL.revokeObjectURL(a.href);
+            } else {
+                const d = await res.json();
+                alert(d.error || 'Bir sorun olu\u015ftu.');
+            }
+        } catch (e) { alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
+    }
+
+    async function downloadExampleAudioZip() {
+        try {
+            const res = await fetch(API + '/api/examples/audio-zip', { credentials: 'same-origin' });
+            if (res.ok) {
+                const blob = await res.blob();
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = 'ornek_ses_dosyalari.zip';
+                a.click();
+                URL.revokeObjectURL(a.href);
+            } else {
+                const d = await res.json();
+                alert(d.error || 'Bir sorun olu\u015ftu.');
+            }
+        } catch (e) { alert('Bir sorun olu\u015ftu. L\u00fctfen tekrar deneyin.'); }
     }
 
     // ══════════════════════════════════════════════════════════

@@ -4971,6 +4971,19 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         elif path == "/api/queue/status":
             return self.handle_queue_status()
 
+        # ── Example datasets ──
+        elif path == "/api/examples":
+            return self.handle_examples_list()
+
+        elif path == "/api/examples/audio-zip":
+            return self.handle_examples_audio_zip()
+
+        elif (m := re.match(r"^/api/examples/audio/([^/]+)$", path)):
+            return self.handle_examples_audio(unquote(m.group(1)))
+
+        elif (m := re.match(r"^/api/examples/csv/([^/]+)$", path)):
+            return self.handle_examples_csv(unquote(m.group(1)))
+
         elif path.startswith("/api/"):
             return self.send_json({"error": "Bulunamadı"}, 404)
 
@@ -5492,6 +5505,106 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
             "training_queue": _training_queue.queue_length(),
             "audio_eval_queue": _audio_eval_queue.queue_length(),
         })
+
+    # ── Example datasets ────────────────────────────────────────
+
+    @staticmethod
+    def _nat_sort_key(name):
+        """Sort key for natural ordering: 1_x, 2_x, 10_x instead of 1_x, 10_x, 2_x."""
+        return [int(p) if p.isdigit() else p.lower() for p in re.split(r'(\d+)', name)]
+
+    def handle_examples_list(self):
+        """Return list of available example files from the example/ directory."""
+        user = self._require_auth()
+        if not user:
+            return
+        example_dir = BASE_DIR / "example"
+        audio_files = []
+        csv_files = []
+        if example_dir.is_dir():
+            for f in example_dir.iterdir():
+                if not f.is_file():
+                    continue
+                ext = f.suffix.lower()
+                if ext == ".mp3":
+                    audio_files.append(f.name)
+                elif ext == ".csv":
+                    csv_files.append(f.name)
+        audio_files.sort(key=self._nat_sort_key)
+        csv_files.sort(key=self._nat_sort_key)
+        self.send_json({"audio_files": audio_files, "csv_files": csv_files})
+
+    def handle_examples_audio_zip(self):
+        """Download all example MP3 files as a single zip."""
+        import zipfile as _zipfile
+        user = self._require_auth()
+        if not user:
+            return
+        example_dir = BASE_DIR / "example"
+        if not example_dir.is_dir():
+            return self.send_json({"error": "Örnek dosya klasörü bulunamadı"}, 404)
+        mp3_files = sorted([f for f in example_dir.iterdir() if f.is_file() and f.suffix.lower() == ".mp3"], key=lambda f: self._nat_sort_key(f.name))
+        if not mp3_files:
+            return self.send_json({"error": "Örnek ses dosyası bulunamadı"}, 404)
+        buf = io.BytesIO()
+        with _zipfile.ZipFile(buf, "w", _zipfile.ZIP_STORED) as zf:
+            for f in mp3_files:
+                zf.write(f, f.name)
+        zip_bytes = buf.getvalue()
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Length", str(len(zip_bytes)))
+            self.send_header("Content-Disposition", 'attachment; filename="ornek_ses_dosyalari.zip"')
+            origin = self._cors_origin()
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Vary", "Origin")
+                if self._cors_allowed and self._cors_allowed != "*":
+                    self.send_header("Access-Control-Allow-Credentials", "true")
+            self.send_header("Access-Control-Expose-Headers", "Content-Disposition")
+            self.end_headers()
+            self.wfile.write(zip_bytes)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+
+    def _serve_example_file(self, filename: str, allowed_ext: str, content_type: str, as_attachment: bool):
+        """Serve a single file from the example/ directory with path-traversal protection."""
+        user = self._require_auth()
+        if not user:
+            return
+        if "/" in filename or "\\" in filename or ".." in filename:
+            return self.send_json({"error": "Geçersiz dosya adı"}, 400)
+        example_dir = (BASE_DIR / "example").resolve()
+        file_path = (BASE_DIR / "example" / filename).resolve()
+        if not str(file_path).startswith(str(example_dir) + os.sep):
+            return self.send_json({"error": "Geçersiz dosya yolu"}, 400)
+        if not file_path.is_file() or file_path.suffix.lower() != allowed_ext:
+            return self.send_json({"error": "Dosya bulunamadı"}, 404)
+        try:
+            data = file_path.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            if as_attachment:
+                self.send_header("Content-Disposition", f'attachment; filename="{self._safe_filename(filename)}"')
+                self.send_header("Access-Control-Expose-Headers", "Content-Disposition")
+            origin = self._cors_origin()
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Vary", "Origin")
+                if self._cors_allowed and self._cors_allowed != "*":
+                    self.send_header("Access-Control-Allow-Credentials", "true")
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+
+    def handle_examples_audio(self, filename: str):
+        return self._serve_example_file(filename, ".mp3", "audio/mpeg", False)
+
+    def handle_examples_csv(self, filename: str):
+        return self._serve_example_file(filename, ".csv", "text/csv; charset=utf-8", True)
 
     # ── API Handlers ───────────────────────────────────────────
 
@@ -7952,6 +8065,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             "total": job.get("total", 0),
             "processed": job.get("processed", 0),
         }
+        if job["status"] == "queued":
+            response["position"] = _audio_eval_queue.get_position(job_id)
         if job["status"] == "done":
             response["row_results"] = job.get("row_results", [])
         if job["status"] == "error":
