@@ -2002,6 +2002,13 @@ def _download_llama_model():
     url = f"https://huggingface.co/{LLAMA_MODEL_REPO}/resolve/main/{LLAMA_MODEL_FILE}"
     tmp_path = str(model_path) + ".tmp"
     urllib.request.urlretrieve(url, tmp_path)
+    # Validate downloaded file is a GGUF model (not an HTML error page)
+    with open(tmp_path, "rb") as f:
+        magic = f.read(4)
+    if magic != b"GGUF":
+        os.remove(tmp_path)
+        raise RuntimeError(f"Downloaded file is not a valid GGUF model (magic={magic!r}). "
+                           f"HuggingFace may have returned an error page (403/rate limit).")
     os.replace(tmp_path, str(model_path))
     log.info(f"[LLM] Model downloaded: {model_path}")
     return str(model_path)
@@ -2018,6 +2025,18 @@ def _start_bundled_llama():
         return
 
     port = int(LLAMA_PORT)
+
+    # Kill any orphan llama-server from a previous SIGKILL'd run
+    if sys.platform != "win32":
+        try:
+            import subprocess as _sp_kill
+            result = _sp_kill.run(["pkill", "-f", f"llama-server.*--port.*{port}"],
+                                  capture_output=True, timeout=5)
+            if result.returncode == 0:
+                log.info(f"[LLM] Killed orphan llama-server on port {port}")
+                time.sleep(1)  # let GPU memory release
+        except (FileNotFoundError, _sp_kill.TimeoutExpired, OSError):
+            pass
 
     if LLAMA_BUNDLED == "auto":
         try:
