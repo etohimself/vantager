@@ -7762,7 +7762,15 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             model_ref_counter.release(model_id)
             return self.send_json({"error": "Sunucu meşgul. Lütfen birkaç saniye bekleyin."}, 503)
 
+        _explain_resource_id = f"explain_{uuid.uuid4().hex[:8]}"
+        _explain_resource_acquired = False
         try:
+            _explain_ram = _estimate_model_ram_mb(model_id, meta)
+            if not resource_manager.try_acquire(_explain_resource_id, "prediction_model_load",
+                                                vram_mb=0, ram_mb=_explain_ram):
+                return self.send_json({"error": "Sunucu meşgul. Lütfen birkaç saniye bekleyip tekrar deneyin."}, 503)
+            _explain_resource_acquired = True
+
             predictor = model_cache.load_model(model_id, meta)
             if predictor is None:
                 return self.send_json({"error": "Model yüklenemedi — bellek yetersiz olabilir"}, 503)
@@ -8111,6 +8119,8 @@ Metin sütunları ({', '.join(meta['text_columns'])}) otomatik olarak embedding'
             traceback.print_exc()
             self.send_json({"error": self._safe_error_message(e)}, 500)
         finally:
+            if _explain_resource_acquired:
+                resource_manager.release(_explain_resource_id)
             _prediction_semaphore.release()
             model_ref_counter.release(model_id)
 
