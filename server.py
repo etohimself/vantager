@@ -5538,9 +5538,10 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         best_model = None
         if visible_models:
             # Separate tabular (higher=better) from timeseries (lower=better)
-            tabular_models = [m for m in visible_models
+            non_audio = [m for m in visible_models if m.get("task_type") != "call_analysis"]
+            tabular_models = [m for m in non_audio
                               if m.get("task_type") != "timeseries" and m.get("best_score", 0) > 0]
-            ts_models = [m for m in visible_models
+            ts_models = [m for m in non_audio
                          if m.get("task_type") == "timeseries" and m.get("best_score", 0) > 0]
 
             best = None
@@ -5548,8 +5549,8 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                 best = max(tabular_models, key=lambda m: m.get("best_score", 0))
             elif ts_models:
                 best = min(ts_models, key=lambda m: m.get("best_score", float('inf')))
-            else:
-                best = max(visible_models, key=lambda m: m.get("best_score", 0))
+            elif non_audio:
+                best = max(non_audio, key=lambda m: m.get("best_score", 0))
 
             if best:
                 best_model = {
@@ -5561,6 +5562,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         self.send_json({
             "total_models": len(visible_models),
             "my_model_count": len(my_models),
+            "total_users": len(load_users()),
             "recent_public": recent_public[:6],
             "popular": popular,
             "endorsed": endorsed,

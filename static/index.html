@@ -624,9 +624,9 @@
                     <div class="text-slate-500 text-xs font-medium mb-1">${data.best_model && data.best_model.task_type === 'timeseries' ? 'En \u0130yi MASE' : 'En Ba\u015far\u0131l\u0131 Sonu\u00e7'}</div>
                     ${data.best_model ? `<div class="text-3xl font-bold ${scoreColor(data.best_model.score, data.best_model.task_type)}">${formatScore(data.best_model.score, data.best_model.task_type)}</div><div class="text-xs text-slate-400 truncate mt-0.5">${esc(data.best_model.name)}</div>` : '<div class="text-slate-400 text-sm">Hen\u00fcz analiz yok</div>'}
                 </div>
-                <div class="stat-card flex flex-col justify-between">
-                    <div class="text-slate-500 text-xs font-medium mb-2">H\u0131zl\u0131 \u0130\u015flemler</div>
-                    <button class="btn-secondary btn-sm w-full text-center" onclick="navigate('/library')">T\u00fcm Analizlere Git</button>
+                <div class="stat-card">
+                    <div class="text-slate-500 text-xs font-medium mb-1">Toplam Kullan\u0131c\u0131</div>
+                    <div class="text-3xl font-bold text-slate-800">${esc(data.total_users)}</div>
                 </div>
             </div>
 
