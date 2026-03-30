@@ -975,7 +975,7 @@
                             <div>
                                 <label class="block text-sm font-medium text-slate-600 mb-1.5">Analiz Kalitesi</label>
                                 <select class="input-field" id="preset">
-                                    ${presets.map(p => `<option value="${esc(p.value)}">${esc(p.label)}</option>`).join('')}
+                                    ${presets.map((p, i) => `<option value="${esc(p.value)}"${i === 0 ? ' selected' : ''}>${esc(p.label)}</option>`).join('')}
                                 </select>
                             </div>
                             <div>
@@ -1164,6 +1164,7 @@
             uploadData = data;
             document.getElementById('train-step1').classList.add('hidden');
             document.getElementById('train-step2').classList.remove('hidden');
+            document.getElementById('train-step3').classList.add('hidden');
             document.getElementById('file-info').textContent = `${data.filename} \u2014 ${data.columns.length} s\u00fctun`;
             const select = document.getElementById('target-col');
             select.innerHTML = data.columns.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
@@ -2552,7 +2553,7 @@
     }
 
     function handleBatchDrop(e, modelId, submodelName) { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) runBatchFromFile(f, modelId, submodelName); }
-    function runBatchPrediction(input, modelId, submodelName) { const f = input.files[0]; if (f) runBatchFromFile(f, modelId, submodelName); }
+    function runBatchPrediction(input, modelId, submodelName) { const f = input.files[0]; input.value = ''; if (f) runBatchFromFile(f, modelId, submodelName); }
 
     async function runBatchFromFile(file, modelId, submodelName) {
         const batchResult = document.getElementById('batch-result');

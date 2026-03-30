@@ -216,7 +216,7 @@ def clean_dataframe(df, context="training", timestamp_column=None, item_id_colum
         # Convert timestamp column
         if timestamp_column and timestamp_column in df.columns:
             try:
-                df[timestamp_column] = pd.to_datetime(df[timestamp_column])
+                df[timestamp_column] = pd.to_datetime(df[timestamp_column], format='mixed', dayfirst=False)
                 report["actions_taken"].append(f"'{timestamp_column}' sütunu datetime'a dönüştürüldü")
                 # Drop rows where timestamp became NaT (blank/null cells) — AutoGluon requires non-null timestamps
                 nat_count = df[timestamp_column].isna().sum()
@@ -340,7 +340,28 @@ def clean_dataframe(df, context="training", timestamp_column=None, item_id_colum
     for col in str_cols:
         df[col] = df[col].apply(lambda x: x.strip() if isinstance(x, str) else x)
 
+    # ── Auto-detect and convert Turkish/European decimal format ──
+    # Values like "457,09" or "1.371,28" should be numeric, not categorical strings.
+    _turkish_decimal_re = re.compile(r'^-?\d{1,3}(\.\d{3})*(,\d+)?$|^-?\d+(,\d+)$')
     for col in str_cols:
+        sample = df[col].dropna().head(100)
+        if len(sample) < 3:
+            continue
+        match_count = sum(1 for v in sample if _turkish_decimal_re.match(str(v)))
+        if match_count > len(sample) * 0.7:
+            try:
+                converted = df[col].apply(
+                    lambda x: float(str(x).strip().replace('.', '').replace(',', '.'))
+                    if pd.notna(x) and isinstance(x, str) and _turkish_decimal_re.match(str(x).strip())
+                    else x
+                )
+                df[col] = pd.to_numeric(converted, errors='coerce')
+                report["issues_found"].append(f"'{col}' sütununda Türkçe ondalık format algılandı")
+                report["actions_taken"].append(f"'{col}' sütunu sayısal değerlere dönüştürüldü (virgül→nokta)")
+            except (ValueError, TypeError):
+                pass
+
+    for col in df.select_dtypes(include=['object']).columns:
         empty_str_count = (df[col] == '').sum()
         if empty_str_count > 0:
             df[col] = df[col].replace('', np.nan)
@@ -3944,9 +3965,9 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
             if timestamp_column not in df.columns:
                 raise ValueError(f"Zaman damgası sütunu '{timestamp_column}' veride bulunamadı")
 
-            # Ensure datetime type
+            # Ensure datetime type (format='mixed' handles inconsistent date formats)
             try:
-                df[timestamp_column] = pd.to_datetime(df[timestamp_column])
+                df[timestamp_column] = pd.to_datetime(df[timestamp_column], format='mixed', dayfirst=False)
             except (ValueError, TypeError) as e:
                 raise ValueError(f"Zaman damgası sütunundaki tarihler ayrıştırılamadı: {str(e)[:100]}")
 
@@ -4241,7 +4262,10 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
             eval_metric=eval_metric, path=ag_model_path,
         )
 
-        predictor.fit(train_data=train_data, presets=preset, time_limit=600, verbosity=1,
+        predictor.fit(train_data=train_data,
+                      presets=preset if preset in ("medium_quality", "good_quality",
+                                                    "high_quality", "best_quality") else "medium_quality",
+                      time_limit=600, verbosity=1,
                       num_cpus=resource_manager.training_cpu_count,
                       num_gpus=0)  # GPU reserved for Whisper/LLM; tree models are CPU anyway
 
@@ -6010,7 +6034,10 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         admin = self._require_admin()
         if not admin:
             return
-        limit = min(int(params.get("limit", [2000])[0]), 2000)
+        try:
+            limit = min(max(int(params.get("limit", [2000])[0]), 1), 2000)
+        except (ValueError, TypeError):
+            limit = 2000
         with _LOG_RING_LOCK:
             lines = list(_LOG_RING_BUFFER)
         # Return most recent `limit` lines
@@ -6392,6 +6419,9 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
         target_col = data.get("target_column")
         task_type = data.get("task_type", "classification")
         preset = data.get("preset", "medium_quality")
+        _VALID_PRESETS = {"medium_quality", "good_quality", "high_quality", "best_quality"}
+        if preset not in _VALID_PRESETS:
+            preset = "medium_quality"
         model_name = data.get("model_name", f"Model_{datetime.now().strftime('%Y%m%d_%H%M')}")
         if len(model_name) > 200:
             release_model_quota(user["username"])
@@ -6634,7 +6664,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                     return self.send_json({"error": self._safe_error_message(e)}, 400)
 
                 try:
-                    hist_df[ts_col] = pd.to_datetime(hist_df[ts_col])
+                    hist_df[ts_col] = pd.to_datetime(hist_df[ts_col], format='mixed', dayfirst=False)
                 except (ValueError, TypeError) as e:
                     return self.send_json({"error": f"Zaman damgası ayrıştırılamadı: {self._safe_error_message(e)}"}, 400)
 
@@ -6857,18 +6887,28 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                 csv_data = parts.get("file", {}).get("data")
                 if not csv_data:
                     return self.send_json({"error": "CSV dosyası bulunamadı"}, 400)
+                # Auto-detect delimiter (consistent with training upload)
+                _batch_sep_kwargs = {}
                 try:
-                    input_df = pd.read_csv(io.BytesIO(csv_data), encoding='utf-8-sig')
+                    _batch_sample = csv_data[:8192].decode('utf-8-sig', errors='replace')
+                    _batch_dialect = csv.Sniffer().sniff(_batch_sample, delimiters=',;\t|')
+                    if _batch_dialect.delimiter != ',':
+                        _batch_sep_kwargs['sep'] = _batch_dialect.delimiter
+                        log.info(f"[BatchPredict] Auto-detected delimiter: {repr(_batch_dialect.delimiter)}")
+                except csv.Error:
+                    pass
+                try:
+                    input_df = pd.read_csv(io.BytesIO(csv_data), encoding='utf-8-sig', **_batch_sep_kwargs)
                 except UnicodeDecodeError:
                     input_df = None
                     for enc in ['windows-1254', 'latin-1', 'windows-1252']:
                         try:
-                            input_df = pd.read_csv(io.BytesIO(csv_data), encoding=enc)
+                            input_df = pd.read_csv(io.BytesIO(csv_data), encoding=enc, **_batch_sep_kwargs)
                             break
                         except (UnicodeDecodeError, Exception):
                             continue
                     if input_df is None:
-                        input_df = pd.read_csv(io.BytesIO(csv_data), encoding='utf-8', errors='replace')
+                        input_df = pd.read_csv(io.BytesIO(csv_data), encoding='utf-8', errors='replace', **_batch_sep_kwargs)
             else:
                 try:
                     data = json.loads(body)
@@ -6901,7 +6941,7 @@ class PredictionAPIHandler(http.server.SimpleHTTPRequestHandler):
                     item_id_column=id_col if id_col in input_df.columns else None)
 
                 try:
-                    input_df[ts_col] = pd.to_datetime(input_df[ts_col])
+                    input_df[ts_col] = pd.to_datetime(input_df[ts_col], format='mixed', dayfirst=False)
                 except (ValueError, TypeError, KeyError) as e:
                     return self.send_json({"error": f"Zaman damgası sütunu ayrıştırılamadı: {self._safe_error_message(e)}"}, 400)
                 if id_col not in input_df.columns:
