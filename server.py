@@ -144,7 +144,7 @@ def sanitize_value(obj, _depth=0):
         pass
     try:
         import pandas as pd
-        if pd.isna(obj):
+        if isinstance(obj, (float, int, type(None))) and pd.isna(obj):
             return None
     except (ImportError, TypeError, ValueError):
         pass
@@ -161,12 +161,28 @@ def safe_json_dumps(data, **kwargs):
 
 
 def _read_csv_with_fallback(csv_path, **kwargs):
-    """Read CSV with encoding fallback: try utf-8-sig first, then detect encoding."""
+    """Read CSV with encoding fallback and delimiter auto-detection."""
+    import csv as csv_module
+
     # Reject binary files disguised as CSV (latin-1 accepts any byte sequence)
     with open(csv_path, "rb") as f:
-        head = f.read(4096)
+        head = f.read(8192)
     if b'\x00' in head:
         raise ValueError("Dosya bir metin/CSV dosyası değil (ikili veri algılandı). Lütfen geçerli bir CSV yükleyin.")
+
+    # Auto-detect delimiter if not explicitly provided
+    if 'sep' not in kwargs and 'delimiter' not in kwargs:
+        try:
+            sample = head.decode('utf-8-sig', errors='replace')
+            dialect = csv_module.Sniffer().sniff(sample, delimiters=',;\t|')
+            detected_sep = dialect.delimiter
+            if detected_sep != ',':
+                log.info(f"[CSV] Auto-detected delimiter: {repr(detected_sep)} for {csv_path}")
+            kwargs['sep'] = detected_sep
+        except csv_module.Error:
+            pass  # Fall back to pandas default (comma)
+
+    # Encoding fallback chain
     try:
         return pd.read_csv(csv_path, encoding='utf-8-sig', **kwargs)
     except UnicodeDecodeError:
@@ -3063,6 +3079,117 @@ def _try_sklearn_ensemble_sql(obj, feature_columns: list) -> str:
     return None
 
 
+def _catboost_node_to_sql(node, feature_names, depth=0):
+    """Recursively convert a CatBoost tree node dict to a SQL CASE WHEN expression."""
+    if 'split' not in node:
+        # Leaf node
+        return str(round(float(node.get('value', node.get('leaf_value', 0))), 8))
+    split = node['split']
+    feature_idx = split.get('float_feature_index', split.get('feature_index', 0))
+    threshold = split.get('border', split.get('threshold', 0))
+    col = _sql_bracket(feature_names[feature_idx]) if feature_idx < len(feature_names) else f"[feature_{feature_idx}]"
+    left = _catboost_node_to_sql(node.get('left', {}), feature_names, depth + 1)
+    right = _catboost_node_to_sql(node.get('right', {}), feature_names, depth + 1)
+    return f"CASE WHEN TRY_CAST({col} AS FLOAT) <= {round(float(threshold), 8)} THEN {left} ELSE {right} END"
+
+
+def _try_catboost_sql(obj, feature_columns: list) -> str:
+    """Convert CatBoost model to SQL CASE WHEN via JSON tree dump."""
+    try:
+        # Check if it's a CatBoost model
+        model = None
+        if hasattr(obj, 'get_all_params'):
+            model = obj
+        elif hasattr(obj, '_model') and hasattr(obj._model, 'get_all_params'):
+            model = obj._model
+        if model is None:
+            return None
+
+        import tempfile, os
+        _SQL_MAX_TREES = 30
+
+        # Dump model as JSON to parse tree structure
+        with tempfile.NamedTemporaryFile(suffix='.json', delete=False, mode='w') as tmp:
+            tmp_path = tmp.name
+        try:
+            model.save_model(tmp_path, format='json')
+            with open(tmp_path, 'r') as f:
+                model_json = json.load(f)
+        finally:
+            os.unlink(tmp_path)
+
+        # Extract trees from the JSON dump
+        oblivious_trees = model_json.get('oblivious_trees', [])
+        if not oblivious_trees:
+            return None
+
+        # Get feature names
+        features_info = model_json.get('features_info', {})
+        float_features = features_info.get('float_features', [])
+        model_feature_names = []
+        for ff in float_features:
+            fname = ff.get('feature_name', ff.get('flat_feature_index', ''))
+            model_feature_names.append(str(fname))
+        sql_cols = model_feature_names if model_feature_names else feature_columns
+
+        _trees_truncated = len(oblivious_trees) > _SQL_MAX_TREES
+        tree_sqls = []
+
+        for tree in oblivious_trees[:_SQL_MAX_TREES]:
+            splits = tree.get('splits', [])
+            leaf_values = tree.get('leaf_values', [])
+            leaf_weights = tree.get('leaf_weights', [])
+
+            if not splits or not leaf_values:
+                continue
+
+            # Build nested CASE WHEN from symmetric tree splits
+            # Oblivious trees: all nodes at a given depth use the same split
+            # Leaf index is determined by binary path through splits
+            n_leaves = len(leaf_values)
+            n_splits = len(splits)
+
+            # Generate SQL for all leaf paths
+            def _build_symmetric_sql(split_idx, path_bits):
+                if split_idx < 0:
+                    leaf_idx = 0
+                    for i, bit in enumerate(path_bits):
+                        leaf_idx |= (bit << i)
+                    if leaf_idx < len(leaf_values):
+                        return str(round(float(leaf_values[leaf_idx]), 8))
+                    return "0"
+                s = splits[split_idx]
+                fidx = s.get('float_feature_index', 0)
+                border = s.get('border', 0)
+                col = _sql_bracket(sql_cols[fidx]) if fidx < len(sql_cols) else f"[feature_{fidx}]"
+                left_sql = _build_symmetric_sql(split_idx - 1, path_bits + [0])
+                right_sql = _build_symmetric_sql(split_idx - 1, path_bits + [1])
+                return f"CASE WHEN TRY_CAST({col} AS FLOAT) > {round(float(border), 8)} THEN {right_sql} ELSE {left_sql} END"
+
+            tree_sql = _build_symmetric_sql(n_splits - 1, [])
+            tree_sqls.append(f"({tree_sql})")
+
+        if not tree_sqls:
+            return None
+
+        truncation_warning = ""
+        if _trees_truncated:
+            truncation_warning = f"/* UYARI: CatBoost model {len(oblivious_trees)} ağaç içeriyor, SQL yalnızca ilk {_SQL_MAX_TREES} ağacı kullanıyor — sonuçlar yaklaşık olacaktır */\n"
+
+        sum_expr = " + ".join(tree_sqls)
+
+        # Check if binary classification
+        model_params = model_json.get('model_info', {}).get('params', {})
+        loss_function = model_params.get('loss_function', {}).get('type', '')
+        if loss_function in ('Logloss', 'CrossEntropy'):
+            return f"{truncation_warning}1.0 / (1.0 + EXP(-({sum_expr})))"
+        return f"{truncation_warning}{sum_expr}"
+
+    except Exception as e:
+        log.debug(f"CatBoost SQL generation failed: {e}")
+    return None
+
+
 def _try_linear_sql(obj, feature_columns: list, target_col: str, table_name: str) -> str:
     try:
         coefs = getattr(obj, 'coef_', None)
@@ -3104,6 +3231,7 @@ def generate_tree_sql(predictor, model_name: str, feature_columns: list, target_
             ("LightGBM", _try_lightgbm_sql),
             ("XGBoost", _try_xgboost_sql),
             ("sklearn-ensemble", _try_sklearn_ensemble_sql),
+            ("CatBoost", _try_catboost_sql),
         ]
 
         sql_expression = None
@@ -3881,6 +4009,33 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
             if df[target_col].nunique() < 2:
                 raise ValueError("Hedef sütundaki tüm değerler aynı. Zaman serisi tahmini yapılamaz.")
 
+            # Infer time series frequency from data
+            _inferred_freq = None
+            try:
+                _first_id = ts_df.item_ids[0]
+                _first_series_idx = ts_df.loc[_first_id].index
+                _inferred_freq = pd.infer_freq(_first_series_idx)
+                if _inferred_freq:
+                    log.info(f"[TS] Inferred frequency: {_inferred_freq}")
+                else:
+                    # Fallback: estimate from median time delta
+                    _deltas = pd.Series(_first_series_idx).diff().dropna()
+                    _median_delta = _deltas.median()
+                    if _median_delta <= pd.Timedelta(hours=2):
+                        _inferred_freq = "h"
+                    elif _median_delta <= pd.Timedelta(days=1.5):
+                        _inferred_freq = "D"
+                    elif _median_delta <= pd.Timedelta(days=8):
+                        _inferred_freq = "W"
+                    elif _median_delta <= pd.Timedelta(days=35):
+                        _inferred_freq = "MS"
+                    else:
+                        _inferred_freq = "D"
+                    log.warning(f"[TS] pd.infer_freq returned None — estimated freq={_inferred_freq} from median delta={_median_delta}")
+            except Exception as e:
+                _inferred_freq = "D"
+                log.warning(f"[TS] Frequency inference failed ({e}), defaulting to 'D'")
+
             ag_model_path = str(MODELS_DIR / model_id / "agmodel")
 
             ts_predictor = TimeSeriesPredictor(
@@ -3888,6 +4043,7 @@ def train_model(job_id: str, model_id: str, csv_path: str, target_col: str,
                 prediction_length=prediction_length,
                 path=ag_model_path,
                 eval_metric="MASE",
+                freq=_inferred_freq,
             )
 
             ts_predictor.fit(
